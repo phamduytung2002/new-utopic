@@ -2,3 +2,6 @@
 
 # ignore pycache
 __pycache__/
+
+**/wikipedia
+contrastive_topic_model/contextualized_topic_models/data

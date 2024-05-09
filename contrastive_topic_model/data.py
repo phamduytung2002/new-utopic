@@ -33,6 +33,7 @@ import scipy.sparse as sp
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
+import scipy
 
 from datetime import datetime
 from itertools import combinations
@@ -44,13 +45,31 @@ nltk.download('wordnet')
 import warnings
 warnings.filterwarnings("ignore")
 
+def read_text(path):
+    texts = list()
+    with open(path, 'r', encoding='utf-8', errors='ignore') as file:
+        for line in file:
+            texts.append(line.strip())
+    return texts
+
 
 class newsData():
     def __init__(self):
-        self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
-        self.data = self.dataset.data
-        self.targets = self.dataset.target
+        # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        self.data = []
+        self.targets = []
         
+        self.data = read_text(os.path.join('data', '20NG', 'train_texts.txt'))
+        self.targets = np.loadtxt(os.path.join('data', '20NG', 'train_labels.txt'), dtype=int)
+        self.bow = scipy.sparse.load_npz(os.path.join('data', '20NG', 'train_bow.npz'))
+        # self.vocab = read_text(os.path.join('data', '20NG', 'vocab.txt'))
+        # self.contextual_embed = np.load(os.path.join('data', '20NG', 'train_bert.npz'))['arr_0']
+        
+        self.test_data = read_text(os.path.join('data', '20NG', 'test_texts.txt'))
+        self.test_targets = np.loadtxt(os.path.join('data', '20NG', 'test_labels.txt'), dtype=int)
+        self.test_bow = scipy.sparse.load_npz(os.path.join('data', '20NG', 'test_bow.npz'))
+        # self.test_contextual_embed = np.load(os.path.join('data', '20NG', 'test_bert.npz'))['arr_0']
+
         idx = 0
         target_filtered = []
         for text in self.data:
@@ -61,6 +80,88 @@ class newsData():
         self.target_filtered = self.targets[target_filtered]
         self.feature_labels = torch.tensor(self.target_filtered)
 
+
+class IMDBData():
+    def __init__(self):
+        # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        self.data = []
+        self.targets = []
+        
+        self.data = read_text(os.path.join('data', 'IMDB', 'train_texts.txt'))
+        self.targets = np.loadtxt(os.path.join('data', 'IMDB', 'train_labels.txt'), dtype=int)
+        self.bow = scipy.sparse.load_npz(os.path.join('data', 'IMDB', 'train_bow.npz'))
+        # self.vocab = read_text(os.path.join('data', 'IMDB', 'vocab.txt'))
+        # self.contextual_embed = np.load(os.path.join('data', 'IMDB', 'train_bert.npz'))['arr_0']
+        
+        self.test_data = read_text(os.path.join('data', 'IMDB', 'test_texts.txt'))
+        self.test_targets = np.loadtxt(os.path.join('data', 'IMDB', 'test_labels.txt'), dtype=int)
+        self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'IMDB', 'test_bow.npz'))
+        # self.test_contextual_embed = np.load(os.path.join('data', 'IMDB', 'test_bert.npz'))['arr_0']
+
+        idx = 0
+        target_filtered = []
+        for text in self.data:
+            if len(text) > 0:
+                target_filtered.append(idx)
+            idx += 1
+            
+        self.target_filtered = self.targets[target_filtered]
+        self.feature_labels = torch.tensor(self.target_filtered)
+        
+        
+class AGNewsData():
+    def __init__(self):
+        # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        self.data = []
+        self.targets = []
+        
+        self.data = read_text(os.path.join('data', 'AGNews', 'train_texts.txt'))
+        self.targets = np.loadtxt(os.path.join('data', 'AGNews', 'train_labels.txt'), dtype=int)
+        self.bow = scipy.sparse.load_npz(os.path.join('data', 'AGNews', 'train_bow.npz'))
+        # self.vocab = read_text(os.path.join('data', 'AGNews', 'vocab.txt'))
+        # self.contextual_embed = np.load(os.path.join('data', 'AGNews', 'train_bert.npz'))['arr_0']
+        
+        self.test_data = read_text(os.path.join('data', 'AGNews', 'test_texts.txt'))
+        self.test_targets = np.loadtxt(os.path.join('data', 'AGNews', 'test_labels.txt'), dtype=int)
+        self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'AGNews', 'test_bow.npz'))
+        # self.test_contextual_embed = np.load(os.path.join('data', 'AGNews', 'test_bert.npz'))['arr_0']
+
+        idx = 0
+        target_filtered = []
+        for text in self.data:
+            if len(text) > 0:
+                target_filtered.append(idx)
+            idx += 1
+            
+        self.target_filtered = self.targets[target_filtered]
+        self.feature_labels = torch.tensor(self.target_filtered)
+
+class YahooData():
+    def __init__(self):
+        # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        self.data = []
+        self.targets = []
+        
+        self.data = read_text(os.path.join('data', 'AGNews', 'train_texts.txt'))
+        self.targets = np.loadtxt(os.path.join('data', 'AGNews', 'train_labels.txt'), dtype=int)
+        self.bow = scipy.sparse.load_npz(os.path.join('data', 'AGNews', 'train_bow.npz'))
+        # self.vocab = read_text(os.path.join('data', 'AGNews', 'vocab.txt'))
+        # self.contextual_embed = np.load(os.path.join('data', 'AGNews', 'train_bert.npz'))['arr_0']
+        
+        self.test_data = read_text(os.path.join('data', 'AGNews', 'test_texts.txt'))
+        self.test_targets = np.loadtxt(os.path.join('data', 'AGNews', 'test_labels.txt'), dtype=int)
+        self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'AGNews', 'test_bow.npz'))
+        # self.test_contextual_embed = np.load(os.path.join('data', 'AGNews', 'test_bert.npz'))['arr_0']
+
+        idx = 0
+        target_filtered = []
+        for text in self.data:
+            if len(text) > 0:
+                target_filtered.append(idx)
+            idx += 1
+            
+        self.target_filtered = self.targets[target_filtered]
+        self.feature_labels = torch.tensor(self.target_filtered)
 
 class nipsAbstractData():
     def __init__(self, path="./data/papers.csv"):

@@ -4,8 +4,55 @@ from itertools import combinations
 import gensim.downloader
 from gensim.models.coherencemodel import CoherenceModel
 from gensim.corpora.dictionary import Dictionary
+import numpy as np
+from sklearn.metrics import f1_score, accuracy_score
+from sklearn.svm import SVC
+from sklearn import metrics
 
 word2vec_google = gensim.downloader.load('word2vec-google-news-300')
+
+def purity_score(y_true, y_pred):
+    # compute contingency matrix (also called confusion matrix)
+    contingency_matrix = metrics.cluster.contingency_matrix(y_true, y_pred)
+    # return purity
+    return np.sum(np.amax(contingency_matrix, axis=0)) / np.sum(contingency_matrix)
+
+
+def clustering_metric(labels, preds):
+    metrics_func = [
+        {
+            'name': 'Purity',
+            'method': purity_score
+        },
+        {
+            'name': 'NMI',
+            'method': metrics.cluster.normalized_mutual_info_score
+        },
+    ]
+
+    results = dict()
+    for func in metrics_func:
+        results[func['name']] = func['method'](labels, preds)
+
+    return results
+
+def evaluate_clustering(theta, labels):
+    preds = np.argmax(theta, axis=1)
+    return clustering_metric(labels, preds)
+
+def evaluate_classification(train_theta, test_theta, train_labels, test_labels, classifier='SVM', gamma='scale'):
+    if classifier == 'SVM':
+        clf = SVC(gamma=gamma)
+    else:
+        raise NotImplementedError
+
+    clf.fit(train_theta, train_labels)
+    preds = clf.predict(test_theta)
+    results = {
+        'acc': accuracy_score(test_labels, preds),
+        'macro-F1': f1_score(test_labels, preds, average='macro')
+    }
+    return results
 
 def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
     """Get topic coherece, similarity, and topic diversity
@@ -33,32 +80,38 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
         with open(filename, 'r') as f:
             topic_word_list = [line.split() for line in f.readlines() if len(line) > 0]
     
-    os.system(f'java -jar {palmetto_dir}/palmetto-0.1.0-jar-with-dependencies.jar {palmetto_dir}/wikipedia_bd umass {filename} > {filename[:-4]}_umass.txt')
-    with open(f"{filename[:-4]}_umass.txt", 'r') as f:
+    print(palmetto_dir)
+    
+    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd umass {filename} > {filename[:-4]}_umass.txt')
+    # with open(f"{filename[:-4]}_umass.txt", 'r') as f:
+    #     tmpstr = '\n'.join(f.readlines())
+    # umass = read_palmetto_result(tmpstr)
+    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd npmi {filename} > {filename[:-4]}_npmi.txt')
+    # with open(f"{filename[:-4]}_npmi.txt", 'r') as f:
+    #     tmpstr = '\n'.join(f.readlines())
+    # npmi = read_palmetto_result(tmpstr)
+    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd c_p {filename} > {filename[:-4]}_cp.txt')
+    # with open(f"{filename[:-4]}_cp.txt", 'r') as f:
+    #     tmpstr = '\n'.join(f.readlines())
+    # cp = read_palmetto_result(tmpstr)
+    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd uci {filename} > {filename[:-4]}_uci.txt')
+    # with open(f"{filename[:-4]}_uci.txt", 'r') as f:
+    #     tmpstr = '\n'.join(f.readlines())
+    # uci = read_palmetto_result(tmpstr)
+    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd C_V {filename} > {filename[:-4]}_CV.txt')
+    with open(f"{filename[:-4]}_CV.txt", 'r') as f:
         tmpstr = '\n'.join(f.readlines())
-    umass = read_palmetto_result(tmpstr)
-    os.system(f'java -jar {palmetto_dir}/palmetto-0.1.0-jar-with-dependencies.jar {palmetto_dir}/wikipedia_bd npmi {filename} > {filename[:-4]}_npmi.txt')
-    with open(f"{filename[:-4]}_npmi.txt", 'r') as f:
-        tmpstr = '\n'.join(f.readlines())
-    npmi = read_palmetto_result(tmpstr)
-    os.system(f'java -jar {palmetto_dir}/palmetto-0.1.0-jar-with-dependencies.jar {palmetto_dir}/wikipedia_bd c_p {filename} > {filename[:-4]}_cp.txt')
-    with open(f"{filename[:-4]}_cp.txt", 'r') as f:
-        tmpstr = '\n'.join(f.readlines())
-    cp = read_palmetto_result(tmpstr)
-    os.system(f'java -jar {palmetto_dir}/palmetto-0.1.0-jar-with-dependencies.jar {palmetto_dir}/wikipedia_bd uci {filename} > {filename[:-4]}_uci.txt')
-    with open(f"{filename[:-4]}_uci.txt", 'r') as f:
-        tmpstr = '\n'.join(f.readlines())
-    uci = read_palmetto_result(tmpstr)
-    npmi_in = None
-    uci_in = None
-    if 'reference_corpus' in kwargs: # reference_corpus: list of list of words
-        reference_corpus = kwargs['reference_corpus']
-        reference_dictionary = Dictionary(reference_corpus)
-        reference_dictionary.add_documents(topic_word_list)
-        cm = CoherenceModel(topics=topic_word_list, texts=reference_corpus, dictionary=reference_dictionary, coherence='c_npmi', topn=10)
-        npmi_in = cm.get_coherence()
-        cm = CoherenceModel(topics=topic_word_list, texts=reference_corpus, dictionary=reference_dictionary, coherence='c_uci', topn=10)
-        uci_in = cm.get_coherence()
+    CV = read_palmetto_result(tmpstr)
+    # npmi_in = None
+    # uci_in = None
+    # if 'reference_corpus' in kwargs: # reference_corpus: list of list of words
+    #     reference_corpus = kwargs['reference_corpus']
+    #     reference_dictionary = Dictionary(reference_corpus)
+    #     reference_dictionary.add_documents(topic_word_list)
+    #     cm = CoherenceModel(topics=topic_word_list, texts=reference_corpus, dictionary=reference_dictionary, coherence='c_npmi', topn=10)
+    #     npmi_in = cm.get_coherence()
+    #     cm = CoherenceModel(topics=topic_word_list, texts=reference_corpus, dictionary=reference_dictionary, coherence='c_uci', topn=10)
+    #     uci_in = cm.get_coherence()
     sim = get_average_word2vec_similarity(topic_word_list, word2vec_google)
     all_word_set = set()
     all_word_list = []
@@ -67,15 +120,17 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
         all_word_list += word_list
     diversity = len(all_word_set) / len(all_word_list)
     return {'topic_N': len(topic_word_list),
-            'umass_wiki': umass,
-           'npmi_wiki': npmi,
-           'npmi_in': npmi_in,
-           'uci_wiki': uci,
-           'uci_in': uci_in,
-           'cp_wiki': cp,
+        #     'umass_wiki': umass,
+        #    'npmi_wiki': npmi,
+        #    'npmi_in': npmi_in,
+        #    'uci_wiki': uci,
+        #    'uci_in': uci_in,
+           'CV_wiki': CV,
+        #    'cp_wiki': cp,
            'sim_w2v': sim,
            'diversity': diversity,
            'filename': filename}
+
     
 def save_topic_top_keywords(top_keywords_list, filename=None):
     # Save the keywords, seperated with spaces
