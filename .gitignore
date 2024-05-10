@@ -5,6 +5,6 @@ __pycache__/
 
 **/wikipedia
 contrastive_topic_model/contextualized_topic_models/data
-**/results
+**/results*
 **/save
 **/trained_model 
