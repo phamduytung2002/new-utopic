@@ -82,22 +82,22 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
     
     print(palmetto_dir)
     
-    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd umass {filename} > {filename[:-4]}_umass.txt')
-    # with open(f"{filename[:-4]}_umass.txt", 'r') as f:
-    #     tmpstr = '\n'.join(f.readlines())
-    # umass = read_palmetto_result(tmpstr)
-    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd npmi {filename} > {filename[:-4]}_npmi.txt')
-    # with open(f"{filename[:-4]}_npmi.txt", 'r') as f:
-    #     tmpstr = '\n'.join(f.readlines())
-    # npmi = read_palmetto_result(tmpstr)
-    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd c_p {filename} > {filename[:-4]}_cp.txt')
-    # with open(f"{filename[:-4]}_cp.txt", 'r') as f:
-    #     tmpstr = '\n'.join(f.readlines())
-    # cp = read_palmetto_result(tmpstr)
-    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd uci {filename} > {filename[:-4]}_uci.txt')
-    # with open(f"{filename[:-4]}_uci.txt", 'r') as f:
-    #     tmpstr = '\n'.join(f.readlines())
-    # uci = read_palmetto_result(tmpstr)
+    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd umass {filename} > {filename[:-4]}_umass.txt')
+    with open(f"{filename[:-4]}_umass.txt", 'r') as f:
+        tmpstr = '\n'.join(f.readlines())
+    umass = read_palmetto_result(tmpstr)
+    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd npmi {filename} > {filename[:-4]}_npmi.txt')
+    with open(f"{filename[:-4]}_npmi.txt", 'r') as f:
+        tmpstr = '\n'.join(f.readlines())
+    npmi = read_palmetto_result(tmpstr)
+    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd c_p {filename} > {filename[:-4]}_cp.txt')
+    with open(f"{filename[:-4]}_cp.txt", 'r') as f:
+        tmpstr = '\n'.join(f.readlines())
+    cp = read_palmetto_result(tmpstr)
+    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd uci {filename} > {filename[:-4]}_uci.txt')
+    with open(f"{filename[:-4]}_uci.txt", 'r') as f:
+        tmpstr = '\n'.join(f.readlines())
+    uci = read_palmetto_result(tmpstr)
     os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd C_V {filename} > {filename[:-4]}_CV.txt')
     with open(f"{filename[:-4]}_CV.txt", 'r') as f:
         tmpstr = '\n'.join(f.readlines())
@@ -120,13 +120,13 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
         all_word_list += word_list
     diversity = len(all_word_set) / len(all_word_list)
     return {'topic_N': len(topic_word_list),
-        #     'umass_wiki': umass,
-        #    'npmi_wiki': npmi,
+            'umass_wiki': umass,
+           'npmi_wiki': npmi,
         #    'npmi_in': npmi_in,
-        #    'uci_wiki': uci,
+           'uci_wiki': uci,
         #    'uci_in': uci_in,
            'CV_wiki': CV,
-        #    'cp_wiki': cp,
+           'cp_wiki': cp,
            'sim_w2v': sim,
            'diversity': diversity,
            'filename': filename}

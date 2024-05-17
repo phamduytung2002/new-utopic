@@ -263,6 +263,7 @@ class BertDataset(Dataset):
         
         
     def preprocess_ctm(self, documents):
+        return documents
         preprocessed_docs_tmp = documents
         preprocessed_docs_tmp = [doc.lower() for doc in preprocessed_docs_tmp]
         preprocessed_docs_tmp = [doc.translate(
@@ -348,6 +349,7 @@ class Stage2Dataset(Dataset):
         return len(self.org_list)
         
     def preprocess_ctm(self, documents):
+        return documents
         preprocessed_docs_tmp = documents
         preprocessed_docs_tmp = [doc.lower() for doc in preprocessed_docs_tmp]
         preprocessed_docs_tmp = [doc.translate(
