@@ -87,13 +87,13 @@ class IMDBData():
         self.data = []
         self.targets = []
         
-        self.data = read_text(os.path.join('data', 'IMDB', 'train_texts.txt'))
+        self.data = read_text(os.path.join('data', 'IMDB', 'raw_train_texts.txt'))
         self.targets = np.loadtxt(os.path.join('data', 'IMDB', 'train_labels.txt'), dtype=int)
         self.bow = scipy.sparse.load_npz(os.path.join('data', 'IMDB', 'train_bow.npz'))
         self.vocab = read_text(os.path.join('data', 'IMDB', 'vocab.txt'))
         # self.contextual_embed = np.load(os.path.join('data', 'IMDB', 'train_bert.npz'))['arr_0']
         
-        self.test_data = read_text(os.path.join('data', 'IMDB', 'test_texts.txt'))
+        self.test_data = read_text(os.path.join('data', 'IMDB', 'raw_test_texts.txt'))
         self.test_targets = np.loadtxt(os.path.join('data', 'IMDB', 'test_labels.txt'), dtype=int)
         self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'IMDB', 'test_bow.npz'))
         # self.test_contextual_embed = np.load(os.path.join('data', 'IMDB', 'test_bert.npz'))['arr_0']
