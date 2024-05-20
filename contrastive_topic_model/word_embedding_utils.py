@@ -27,7 +27,7 @@ from sklearn.datasets import fetch_20newsgroups
 from nltk.corpus import stopwords
 
 from sklearn.feature_extraction.text import CountVectorizer
-from utils import AverageMeter
+from utils.miscellaneous import AverageMeter
 from collections import OrderedDict
 
 import pandas as pd

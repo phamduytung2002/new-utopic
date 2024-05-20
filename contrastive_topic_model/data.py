@@ -56,6 +56,8 @@ def read_text(path):
 class newsData():
     def __init__(self):
         # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        # self.data = self.dataset.data
+        # self.targets = self.dataset.target
         self.data = []
         self.targets = []
         

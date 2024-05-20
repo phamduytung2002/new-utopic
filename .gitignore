@@ -7,4 +7,5 @@ __pycache__/
 contrastive_topic_model/contextualized_topic_models/data
 **/results*
 **/save
-**/trained_model 
+**/trained_model*
+**/wandb
