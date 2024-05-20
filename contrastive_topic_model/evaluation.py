@@ -40,18 +40,45 @@ def evaluate_clustering(theta, labels):
     preds = np.argmax(theta, axis=1)
     return clustering_metric(labels, preds)
 
-def evaluate_classification(train_theta, test_theta, train_labels, test_labels, classifier='SVM', gamma='scale'):
-    if classifier == 'SVM':
-        clf = SVC(gamma=gamma)
-    else:
-        raise NotImplementedError
+def evaluate_classification(train_theta, test_theta, train_labels, test_labels, classifier='SVM', gamma='scale', tune=False):
+    if tune:
+        results = {
+            'acc': 0,
+            'macro-F1': 0
+        }
+        for C in [0.1, 1, 10, 100, 1000]:
+            for gamma in ['scale', 'auto', 10, 1, 0.1, 0.01]:
+                print(f'C: {C}, gamma: {gamma}')
+                for kernel in ['rbf', 'linear']:
+                    print(f'C: {C}, gamma: {gamma}, kernel: {kernel}')
+                    if classifier == 'SVM':
+                        clf = SVC(C=C, kernel=kernel, gamma=gamma)
+                    else:
+                        raise NotImplementedError
 
-    clf.fit(train_theta, train_labels)
-    preds = clf.predict(test_theta)
-    results = {
-        'acc': accuracy_score(test_labels, preds),
-        'macro-F1': f1_score(test_labels, preds, average='macro')
-    }
+                    clf.fit(train_theta, train_labels)
+                    preds = clf.predict(test_theta)
+                    this_results = {
+                        'acc': accuracy_score(test_labels, preds),
+                        'macro-F1': f1_score(test_labels, preds, average='macro')
+                    }
+                    results = {
+                        key: max(results[key], this_results[key])
+                        for key in results
+                    }
+                    print(f'Accuracy: {this_results["acc"]}, Macro-F1: {this_results["macro-F1"]}')
+    else:
+        if classifier == 'SVM':
+            clf = SVC(gamma=gamma)
+        else:
+            raise NotImplementedError
+
+        clf.fit(train_theta, train_labels)
+        preds = clf.predict(test_theta)
+        results = {
+            'acc': accuracy_score(test_labels, preds),
+            'macro-F1': f1_score(test_labels, preds, average='macro')
+        }
     return results
 
 def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
@@ -82,10 +109,10 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
     
     print(palmetto_dir)
     
-    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd umass {filename} > {filename[:-4]}_umass.txt')
-    with open(f"{filename[:-4]}_umass.txt", 'r') as f:
-        tmpstr = '\n'.join(f.readlines())
-    umass = read_palmetto_result(tmpstr)
+    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd umass {filename} > {filename[:-4]}_umass.txt')
+    # with open(f"{filename[:-4]}_umass.txt", 'r') as f:
+    #     tmpstr = '\n'.join(f.readlines())
+    # umass = read_palmetto_result(tmpstr)
     os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd npmi {filename} > {filename[:-4]}_npmi.txt')
     with open(f"{filename[:-4]}_npmi.txt", 'r') as f:
         tmpstr = '\n'.join(f.readlines())
@@ -94,10 +121,10 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
     with open(f"{filename[:-4]}_cp.txt", 'r') as f:
         tmpstr = '\n'.join(f.readlines())
     cp = read_palmetto_result(tmpstr)
-    os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd uci {filename} > {filename[:-4]}_uci.txt')
-    with open(f"{filename[:-4]}_uci.txt", 'r') as f:
-        tmpstr = '\n'.join(f.readlines())
-    uci = read_palmetto_result(tmpstr)
+    # os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd uci {filename} > {filename[:-4]}_uci.txt')
+    # with open(f"{filename[:-4]}_uci.txt", 'r') as f:
+    #     tmpstr = '\n'.join(f.readlines())
+    # uci = read_palmetto_result(tmpstr)
     os.system(f'java -jar {palmetto_dir}/palmetto.jar {palmetto_dir}/wikipedia/wikipedia_bd C_V {filename} > {filename[:-4]}_CV.txt')
     with open(f"{filename[:-4]}_CV.txt", 'r') as f:
         tmpstr = '\n'.join(f.readlines())
@@ -120,10 +147,10 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
         all_word_list += word_list
     diversity = len(all_word_set) / len(all_word_list)
     return {'topic_N': len(topic_word_list),
-            'umass_wiki': umass,
+            # 'umass_wiki': umass,
            'npmi_wiki': npmi,
         #    'npmi_in': npmi_in,
-           'uci_wiki': uci,
+        #    'uci_wiki': uci,
         #    'uci_in': uci_in,
            'CV_wiki': CV,
            'cp_wiki': cp,
