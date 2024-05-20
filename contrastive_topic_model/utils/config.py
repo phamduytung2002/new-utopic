@@ -21,7 +21,7 @@ def _parse_args():
     parser.add_argument('--base-model', type=str,
                         help='Name of base model in huggingface library.')
     
-    parser.add_argument('--gpus', default=[0,1], type=int, nargs='+',
+    parser.add_argument('--gpus', default=[0,1,2,3], type=int, nargs='+',
                         help='List of GPU numbers to use. Use 0 by default')
     
     parser.add_argument('--coeff-1-sim', default=1.0, type=float,
