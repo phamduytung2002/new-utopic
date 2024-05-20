@@ -268,7 +268,10 @@ if __name__=="__main__":
         for epoch in range(epochs_1):
             torch.save(model.state_dict(), f'./trained_model/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{epoch}e.ckpt')
             model.train()
-            model.encoder.eval()
+            try:
+                model.module.encoder.eval()
+            except:
+                model.encoder.eval()
             #ema_model.train()
             tbar = tqdm(trainloader)
             for batch_idx, batch in enumerate(tbar):       
