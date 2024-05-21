@@ -1,0 +1,720 @@
+import os
+import copy
+import argparse
+import string
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchtools.optim import RangerLars
+import itertools
+from word_embedding_utils import *
+from collections import OrderedDict
+
+from sentence_transformers import SentenceTransformer
+from evaluation import evaluate_classification, evaluate_clustering
+
+
+import numpy as np
+from tqdm import tqdm_notebook
+from torch.utils.data import Dataset, DataLoader
+from nltk.corpus import stopwords
+
+from sklearn.feature_extraction.text import CountVectorizer
+from utils.miscellaneous import AverageMeter
+from collections import OrderedDict
+
+import pandas as pd
+from sklearn.feature_extraction.text import  CountVectorizer
+from gensim.corpora.dictionary import Dictionary
+from pytorch_transformers import *
+from nltk.corpus import stopwords
+
+from tqdm import tqdm
+import scipy.sparse as sp
+import nltk
+from nltk.corpus import stopwords
+
+from datetime import datetime
+from scipy.linalg import qr
+from data import *
+from model import ContBertTopicExtractorAE
+from evaluation import get_topic_qualities
+import warnings
+warnings.filterwarnings("ignore")
+from contextualized_topic_models.utils.data_preparation import TopicModelDataPreparation
+from nltk.corpus import stopwords as stop_words
+from gensim.utils import deaccent
+from utils.config import _parse_args, save_config
+import wandb
+from utils import miscellaneous, log
+
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"  # Arrange GPU devices starting from 0
+os.environ["CUDA_VISIBLE_DEVICES"]= "0" 
+
+class Stage2Dataset(Dataset):
+    def __init__(self, encoder, ds, basesim_matrix, word_candidates, k=1, lemmatize=False):
+        self.lemmatize = lemmatize
+        self.ds = ds
+        self.org_list = self.ds.org_list
+        self.nonempty_text = self.ds.nonempty_text
+        english_stopwords = nltk.corpus.stopwords.words('english')
+        self.stopwords_list = set(english_stopwords)
+        self.vectorizer = CountVectorizer(vocabulary=word_candidates)
+        self.vectorizer.fit(self.preprocess_ctm(self.nonempty_text)) 
+        self.bow_list = []
+        for sent in tqdm(self.nonempty_text):
+            self.bow_list.append(self.vectorize(sent))
+            
+        sim_weight, sim_indices = basesim_matrix.topk(k=k, dim=-1)
+        zip_iterator = zip(np.arange(len(sim_weight)), sim_indices.squeeze().data.numpy())
+        self.pos_dict = dict(zip_iterator)
+        
+        self.embedding_list = []
+        encoder_device = next(encoder.parameters()).device
+        for org_input in tqdm(self.org_list):
+            org_input_ids = org_input['input_ids'].to(encoder_device).reshape(1, -1)
+            org_attention_mask = org_input['attention_mask'].to(encoder_device).reshape(1, -1)
+            embedding = encoder(input_ids = org_input_ids, attention_mask = org_attention_mask)
+            self.embedding_list.append(embedding['pooler_output'].squeeze().detach().cpu())
+            
+    
+    def __len__(self):
+        return len(self.org_list)
+        
+    def preprocess_ctm(self, documents):
+        preprocessed_docs_tmp = documents
+        preprocessed_docs_tmp = [doc.lower() for doc in preprocessed_docs_tmp]
+        preprocessed_docs_tmp = [doc.translate(
+            str.maketrans(string.punctuation, ' ' * len(string.punctuation))) for doc in preprocessed_docs_tmp]
+        preprocessed_docs_tmp = [' '.join([w for w in doc.split() if len(w) > 0 and w not in self.stopwords_list])
+                                 for doc in preprocessed_docs_tmp]
+        if self.lemmatize:
+            lemmatizer = WordNetLemmatizer()
+            preprocessed_docs_tmp = [' '.join([lemmatizer.lemmatize(w) for w in doc.split()])
+                                     for doc in preprocessed_docs_tmp]
+        return preprocessed_docs_tmp
+        
+    def vectorize(self, text):
+        text = self.preprocess_ctm([text])
+        vectorized_input = self.vectorizer.transform(text)
+        vectorized_input = vectorized_input.toarray().astype(np.float64)
+#         vectorized_input = (vectorized_input != 0).astype(np.float64)
+
+        # Get word distribution from BoW
+        if vectorized_input.sum() == 0:
+            vectorized_input += 1e-8
+        vectorized_input = vectorized_input / vectorized_input.sum(axis=1, keepdims=True)
+        assert abs(vectorized_input.sum() - vectorized_input.shape[0]) < 0.01
+        
+        vectorized_label = torch.tensor(vectorized_input, dtype=torch.float)
+        return vectorized_label[0]
+        
+        
+    def __getitem__(self, idx):
+        pos_idx = self.pos_dict[idx]
+        return self.embedding_list[idx], self.embedding_list[pos_idx], self.bow_list[idx], self.bow_list[pos_idx]
+
+class Stage2TestDataset(Dataset):
+    def __init__(self, encoder, ds, word_candidates, k=1, lemmatize=False):
+        self.lemmatize = lemmatize
+        self.ds = ds
+        self.org_list = self.ds.org_list
+        self.nonempty_text = self.ds.nonempty_text
+        english_stopwords = nltk.corpus.stopwords.words('english')
+        self.stopwords_list = set(english_stopwords)
+        self.vectorizer = CountVectorizer(vocabulary=word_candidates)
+        self.vectorizer.fit(self.preprocess_ctm(self.nonempty_text)) 
+        self.bow_list = []
+        for sent in tqdm(self.nonempty_text):
+            self.bow_list.append(self.vectorize(sent))
+        
+        self.embedding_list = []
+        encoder_device = next(encoder.parameters()).device
+        for org_input in tqdm(self.org_list):
+            org_input_ids = org_input['input_ids'].to(encoder_device).reshape(1, -1)
+            org_attention_mask = org_input['attention_mask'].to(encoder_device).reshape(1, -1)
+            embedding = encoder(input_ids = org_input_ids, attention_mask = org_attention_mask)
+            self.embedding_list.append(embedding['pooler_output'].squeeze().detach().cpu())
+            
+    
+    def __len__(self):
+        return len(self.org_list)
+        
+    def preprocess_ctm(self, documents):
+        preprocessed_docs_tmp = documents
+        preprocessed_docs_tmp = [doc.lower() for doc in preprocessed_docs_tmp]
+        preprocessed_docs_tmp = [doc.translate(
+            str.maketrans(string.punctuation, ' ' * len(string.punctuation))) for doc in preprocessed_docs_tmp]
+        preprocessed_docs_tmp = [' '.join([w for w in doc.split() if len(w) > 0 and w not in self.stopwords_list])
+                                 for doc in preprocessed_docs_tmp]
+        if self.lemmatize:
+            lemmatizer = WordNetLemmatizer()
+            preprocessed_docs_tmp = [' '.join([lemmatizer.lemmatize(w) for w in doc.split()])
+                                     for doc in preprocessed_docs_tmp]
+        return preprocessed_docs_tmp
+        
+    def vectorize(self, text):
+        text = self.preprocess_ctm([text])
+        vectorized_input = self.vectorizer.transform(text)
+        vectorized_input = vectorized_input.toarray().astype(np.float64)
+#         vectorized_input = (vectorized_input != 0).astype(np.float64)
+
+        # Get word distribution from BoW
+        if vectorized_input.sum() == 0:
+            vectorized_input += 1e-8
+        vectorized_input = vectorized_input / vectorized_input.sum(axis=1, keepdims=True)
+        assert abs(vectorized_input.sum() - vectorized_input.shape[0]) < 0.01
+        
+        vectorized_label = torch.tensor(vectorized_input, dtype=torch.float)
+        return vectorized_label[0]
+        
+        
+    def __getitem__(self, idx):
+        return self.embedding_list[idx], self.bow_list[idx]
+
+class WhiteSpacePreprocessing():
+    def __init__(self, documents, stopwords_language="english", vocabulary_size=2000):
+        self.documents = documents
+        self.stopwords = set(stop_words.words(stopwords_language))
+        self.vocabulary_size = vocabulary_size
+
+        warnings.simplefilter('always', DeprecationWarning)
+        warnings.warn("WhiteSpacePreprocessing is deprecated and will be removed in future versions."
+                      "Use WhiteSpacePreprocessingStopwords.")
+
+    def preprocess(self):
+        preprocessed_docs_tmp = self.documents
+        preprocessed_docs_tmp = [deaccent(doc.lower()) for doc in preprocessed_docs_tmp]
+        preprocessed_docs_tmp = [doc.translate(
+            str.maketrans(string.punctuation, ' ' * len(string.punctuation))) for doc in preprocessed_docs_tmp]
+        preprocessed_docs_tmp = [' '.join([w for w in doc.split() if len(w) > 0 and w not in self.stopwords])
+                                 for doc in preprocessed_docs_tmp]
+
+        vectorizer = CountVectorizer(max_features=self.vocabulary_size)
+        vectorizer.fit_transform(preprocessed_docs_tmp)
+        temp_vocabulary = set(vectorizer.get_feature_names())
+
+        preprocessed_docs_tmp = [' '.join([w for w in doc.split() if w in temp_vocabulary])
+                                 for doc in preprocessed_docs_tmp]
+
+        preprocessed_docs, unpreprocessed_docs, retained_indices = [], [], []
+        for i, doc in enumerate(preprocessed_docs_tmp):
+            if len(doc) > 0:
+                preprocessed_docs.append(doc)
+                unpreprocessed_docs.append(self.documents[i])
+                retained_indices.append(i)
+
+        vocabulary = list(set([item for doc in preprocessed_docs for item in doc.split()]))
+
+        return preprocessed_docs, unpreprocessed_docs, vocabulary, retained_indices
+
+def get_document_topic(topic_words, preprocessed_documents_lemmatized):
+    topic_words_flatten = list(itertools.chain.from_iterable(topic_words))
+    if '' in topic_words_flatten:
+        topic_words_flatten.remove('')
+    topic_words_flatten = list(set(topic_words_flatten))
+    
+    vectorizer = CountVectorizer(vocabulary = topic_words_flatten)
+    vectorizer = vectorizer.fit(preprocessed_documents_lemmatized)
+    count_mat = vectorizer.transform(preprocessed_documents_lemmatized).toarray()
+    
+    count_mat_normalized = count_mat + 1e-4
+    count_mat_normalized = count_mat_normalized / count_mat_normalized.sum(axis=1).reshape(-1, 1)
+    
+    topic_mat = vectorizer.transform([' '.join(i) for i in topic_words]).toarray()
+    topic_mat_normalized = topic_mat + 1e-4
+    topic_mat_normalized = topic_mat_normalized / topic_mat_normalized.sum(axis=1).reshape(-1, 1)
+    
+    topic_mat_inverse = topic_mat_normalized @ topic_mat_normalized.transpose()
+    topic_mat_inverse = np.linalg.inv(topic_mat_inverse)
+    topic_mat_inverse = topic_mat_normalized.transpose() @ topic_mat_inverse
+    document_topic = count_mat_normalized @ topic_mat_inverse
+    return document_topic
+
+class TopicModelDataPreparationNoNumber(TopicModelDataPreparation):
+    def fit(self, text_for_contextual, text_for_bow, labels=None, wordlist=None):
+        """
+        This method fits the vectorizer and gets the embeddings from the contextual model
+        :param text_for_contextual: list of unpreprocessed documents to generate the contextualized embeddings
+        :param text_for_bow: list of preprocessed documents for creating the bag-of-words
+        :param labels: list of labels associated with each document (optional).
+        """
+
+        if self.contextualized_model is None:
+            raise Exception("You should define a contextualized model if you want to create the embeddings")
+
+        # TODO: this count vectorizer removes tokens that have len = 1, might be unexpected for the users
+        self.vectorizer = CountVectorizer(token_pattern=r'\b[a-zA-Z]{2,}\b', vocabulary=wordlist)
+
+        train_bow_embeddings = self.vectorizer.fit_transform(text_for_bow)
+        train_contextualized_embeddings = bert_embeddings_from_list(text_for_contextual, self.contextualized_model)
+        self.vocab = self.vectorizer.get_feature_names()
+        self.id2token = {k: v for k, v in zip(range(0, len(self.vocab)), self.vocab)}
+
+        if labels:
+            self.label_encoder = OneHotEncoder()
+            encoded_labels = self.label_encoder.fit_transform(np.array([labels]).reshape(-1, 1))
+        else:
+            encoded_labels = None
+
+        return CTMDataset(train_contextualized_embeddings, train_bow_embeddings, self.id2token, encoded_labels)
+    
+def dist_match_loss(hiddens, alpha=1.0):
+    device = hiddens.device
+    hidden_dim = hiddens.shape[-1]
+    H = np.random.randn(hidden_dim, hidden_dim)
+    Q, R = qr(H) 
+    rand_w = torch.Tensor(Q).to(device)
+    loss_dist_match = get_swd_loss(hiddens, rand_w, alpha)
+    return loss_dist_match
+
+def get_swd_loss(states, rand_w, alpha=1.0):
+    device = states.device
+    states_shape = states.shape
+    states = torch.matmul(states, rand_w)
+    states_t, _ = torch.sort(states.t(), dim=1)
+
+    # Random vector with length from normal distribution
+    states_prior = torch.Tensor(np.random.dirichlet([alpha]*states_shape[1], states_shape[0])).to(device) # (bsz, dim)
+    states_prior = torch.matmul(states_prior, rand_w) # (dim, dim)
+    states_prior_t, _ = torch.sort(states_prior.t(), dim=1) # (dim, bsz)
+    return torch.mean(torch.sum((states_prior_t - states_t)**2, axis=0))
+
+def data_load(dataset_name):
+    should_measure_hungarian = False
+    if dataset_name == 'news':
+        textData = newsData()
+        should_measure_hungarian = True
+    elif dataset_name == 'imdb':
+        textData = IMDBData()
+    elif dataset_name == 'agnews':
+        textData = AGNewsData()
+    elif dataset_name == 'yahoo':
+        textData = YahooData()
+    elif dataset_name == 'twitter':
+        textData = twitterData('/home/data/topicmodel/twitter_covid19.tsv')
+    elif dataset_name == 'wiki':
+        textData = wikiData('/home/data/topicmodel/smplAbstracts/')
+    elif dataset_name == 'nips':
+        textData = nipsData('/home/data/topicmodel/papers.csv')
+    elif dataset_name == 'stackoverflow':
+        textData = stackoverflowData('/home/data/topicmodel/stack_overflow.csv')
+    elif dataset_name == 'reuters':
+        textData = reutersData('/home/data/topicmodel/reuters-21578.txt')
+    elif dataset_name == 'r52':
+        textData = r52Data('/home/data/topicmodel/r52/')
+        should_measure_hungarian = True
+    return textData, should_measure_hungarian
+
+def remove_dup(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
+
+RESULT_DIR = 'results'
+DATA_DIR = 'data'
+
+if __name__ == "__main__":
+    current_time = miscellaneous.get_current_datetime()
+    current_run_dir = os.path.join(RESULT_DIR, current_time)
+    miscellaneous.create_folder_if_not_exist(current_run_dir)
+    
+    logger = log.setup_logger(
+        'main', os.path.join(current_run_dir, 'main.log'))
+
+
+
+    parser = _parse_args()
+    args = parser.parse_args()
+    save_config(args, os.path.join(current_run_dir, 'config.txt'))
+    wandb.init(project="utopic-stage23", config=args)
+
+    bsz = args.bsz
+    epochs_1 = args.epochs_1
+    epochs_2 = args.epochs_2
+
+    n_cluster = args.n_cluster
+    n_topic = args.n_topic if (args.n_topic is not None) else n_cluster
+    args.n_topic = n_topic
+
+    textData, should_measure_hungarian = data_load(args.dataset)
+
+    ema_alpha = 0.99
+    n_word = args.n_word
+    if args.dirichlet_alpha_1 is None:
+        dirichlet_alpha_1 = 1 / n_cluster
+    else:
+        dirichlet_alpha_1 = args.dirichlet_alpha_1
+    if args.dirichlet_alpha_2 is None:
+        dirichlet_alpha_2 = dirichlet_alpha_1
+    else:
+        dirichlet_alpha_2 = args.dirichlet_alpha_2
+        
+    bert_name = args.base_model
+    bert_name_short = bert_name.split('/')[-1]
+    gpu_ids = args.gpus
+
+    skip_stage_1 = (args.stage_1_ckpt is not None)
+
+    trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
+    basesim_path = f"./{current_run_dir}/{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl"
+    if os.path.isfile(basesim_path) == False:
+        model = SentenceTransformer(bert_name.split('/')[-1], device='cuda')
+        base_result_list = []
+        for text in tqdm_notebook(trainds.nonempty_text):
+            base_result_list.append(model.encode(text))
+            
+        base_result_embedding = np.stack(base_result_list)
+        basereduced_norm = F.normalize(torch.tensor(base_result_embedding), dim=-1)
+        basesim_matrix = torch.mm(basereduced_norm, basereduced_norm.t())
+        ind = np.diag_indices(basesim_matrix.shape[0])
+        basesim_matrix[ind[0], ind[1]] = torch.ones(basesim_matrix.shape[0]) * -1
+        torch.save(basesim_matrix, basesim_path)
+    else:
+        basesim_matrix = torch.load(basesim_path)
+
+
+    model_stage1_name = args.stage_1_ckpt
+    new_state_dict = OrderedDict()
+    for k, v in torch.load(model_stage1_name).items():
+        if k.startswith("module."):
+            new_state_dict[k[7:]] = v  # Remove 'module.' prefix
+        else:
+            new_state_dict[k] = v
+
+    model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
+    model.cuda(gpu_ids[0])
+
+    model.load_state_dict(new_state_dict, strict=True)
+    temp_basesim_matrix = copy.deepcopy(basesim_matrix)
+    finetuneds = FinetuneDataset(trainds, temp_basesim_matrix, ratio=1, k=1)
+    memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
+    result_list = []
+
+    model.eval()
+    # torch.set_printoptions(threshold=10000)
+    with torch.no_grad():
+        for idx, batch in enumerate(tqdm_notebook(memoryloader)):        
+            org_input, _, _, _ = batch
+            org_input_ids = org_input['input_ids'].to(gpu_ids[0])
+            org_attention_mask = org_input['attention_mask'].to(gpu_ids[0])
+            topic, embed = model(org_input_ids, org_attention_mask, return_topic = True)
+            result_list.append(topic)
+    result_embedding = torch.cat(result_list)
+    _, result_topic = torch.max(result_embedding, 1)
+
+    d = {'text': trainds.preprocess_ctm(trainds.nonempty_text), 
+        'cluster_label': result_topic.cpu().numpy()}
+    cluster_df = pd.DataFrame(data=d)
+
+    docs_per_class = cluster_df.groupby(['cluster_label'], as_index=False).agg({'text': ' '.join})
+
+    count_vectorizer = CountVectorizer(token_pattern=r'\b[a-zA-Z]{2,}\b')
+    # count_vectorizer = CountVectorizer()
+    ctfidf_vectorizer = CTFIDFVectorizer()
+    count = count_vectorizer.fit_transform(docs_per_class.text)
+    ctfidf = ctfidf_vectorizer.fit_transform(count, n_samples=len(cluster_df)).toarray()
+    words = count_vectorizer.get_feature_names()
+
+    # transport to gensim
+    (gensim_corpus, gensim_dict) = vect2gensim(count_vectorizer, count)
+    vocab_list = set(gensim_dict.token2id.keys())
+    stopwords = set(line.strip() for line in open('stopwords_en.txt'))
+
+    normalized = [coherence_normalize(doc) for doc in trainds.nonempty_text]
+    gensim_dict = Dictionary(normalized)
+    resolution_score = (ctfidf - np.min(ctfidf, axis=1, keepdims=True)) / (np.max(ctfidf, axis=1, keepdims=True) - np.min(ctfidf, axis=1, keepdims=True))
+
+    n_word = args.n_word
+    # n_topic_word = n_word / len(docs_per_class.cluster_label.index)
+    n_topic_word = n_word
+    n_topic_word = 15
+
+    topic_word_dict = {}
+    for label in docs_per_class.cluster_label.index:
+        total_score = resolution_score[label]
+        score_higest = total_score.argsort()
+        score_higest = score_higest[::-1]
+        topic_word_list = [words[index] for index in score_higest]
+        
+        topic_word_list = [word for word in topic_word_list if len(word) >= 3]    
+        topic_word_list = [word for word in topic_word_list if word not in stopwords]    
+        topic_word_list = [word for word in topic_word_list if word in gensim_dict.token2id]
+        topic_word_dict[docs_per_class.cluster_label.iloc[label]] = topic_word_list[:int(n_topic_word)]
+        
+    for key in topic_word_dict:
+        print(f"{key}: {topic_word_dict[key]},")
+        logger.info(f"{key}: {topic_word_dict[key]},")
+    topic_words_list = list(topic_word_dict.values())
+
+    topic_words_list = list(topic_word_dict.values())
+    qt = TopicModelDataPreparationNoNumber("sentence-transformers/all-MiniLM-L6-v2")
+    sp = WhiteSpacePreprocessing(textData.data, stopwords_language='english')
+    preprocessed_documents, unpreprocessed_corpus, vocab, retained_indices = sp.preprocess()
+    vectorizer_model = CountVectorizer(stop_words="english")
+    lemmatizer = WordNetLemmatizer()
+    preprocessed_documents_lemmatized = [' '.join([lemmatizer.lemmatize(w) for w in doc.split()]) for doc in preprocessed_documents]
+
+    document_topic = get_document_topic(topic_words_list, preprocessed_documents_lemmatized)
+    train_target_filtered = textData.targets.squeeze()[retained_indices]
+    flat_predict = torch.tensor(np.argmax(document_topic, axis=1))
+    flat_target = torch.tensor(train_target_filtered).to(flat_predict.device)
+    num_samples = flat_predict.shape[0]
+    reordered_preds = torch.zeros(num_samples).to(flat_predict.device)
+
+    normalized = [coherence_normalize(doc) for doc in trainds.nonempty_text]
+    gensim_dict = Dictionary(normalized)
+
+    n_word = args.n_word
+    n_topic_word = n_word
+
+    words_to_idx = {k: v for v, k in enumerate(words)}
+    topic_word_dict = {}
+    topic_score_dict = {}
+    total_score_cat = []
+    for label in docs_per_class.cluster_label.index:
+        total_score = resolution_score[label]
+        score_higest = total_score.argsort()
+        score_higest = score_higest[::-1]
+        topic_word_list = [words[index] for index in score_higest]
+        
+        total_score_cat.append(total_score)
+        # topic_word_list = [word for word in topic_word_list if word not in stopwords]    
+        topic_word_list = [word for word in topic_word_list if word in gensim_dict.token2id]
+        # topic_word_list = [word for word in topic_word_list if len(word) >= 3]    
+        topic_word_dict[docs_per_class.cluster_label.iloc[label]] = topic_word_list[:int(n_topic_word)]
+        topic_score_dict[docs_per_class.cluster_label.iloc[label]] = [total_score[words_to_idx[top_word]] for top_word in topic_word_list[:int(n_topic_word)]]
+    total_score_cat = np.stack(total_score_cat, axis = 0)
+
+    topic_words_list = list(topic_word_dict.values())
+    topic_word_set = list(itertools.chain.from_iterable(pd.DataFrame.from_dict(topic_word_dict).values))
+    word_candidates = remove_dup(topic_word_set)[:n_word]
+    n_word = len(word_candidates)
+
+    weight_candidates = {}
+    for candidate in word_candidates:
+        weight_candidates[candidate] = [total_score_cat[label, words_to_idx[candidate]] for label in range(n_cluster)]
+
+    weight_cand_to_idx = {k: v for v, k in enumerate(list(weight_candidates.keys()))}
+    weight_cand_matrix = np.array(list(weight_candidates.values()))
+
+    finetuneds = Stage2Dataset(model.encoder, trainds, basesim_matrix, word_candidates, lemmatize=True)    
+    testds = BertDataset(bert=bert_name, text_list=textData.test_data, N_word=n_word, vectorizer=None, lemmatize=True)
+    testds2 = Stage2TestDataset(model.encoder, testds, word_candidates, lemmatize=True)
+
+    kldiv = torch.nn.KLDivLoss(reduction='batchmean')
+    vocab_dict = finetuneds.vectorizer.vocabulary_
+    vocab_dict_reverse = {i:v for v, i in vocab_dict.items()}
+    print(n_word)
+
+    weight_cands = torch.tensor(weight_cand_matrix.max(axis=1)).cuda(gpu_ids[0]).float()
+
+    results_list = []
+
+    for i in range(args.stage_2_repeat):
+        model = ContBertTopicExtractorAE(N_topic=n_topic, N_word=args.n_word, bert=bert_name, bert_dim=384)
+        new_state_dict = OrderedDict()
+        for k, v in torch.load(model_stage1_name).items():
+            if k.startswith("module."):
+                new_state_dict[k[7:]] = v  # Remove 'module.' prefix
+            else:
+                new_state_dict[k] = v
+        model.load_state_dict(new_state_dict, strict=True)
+        model.beta = nn.Parameter(torch.Tensor(model.N_topic, n_word))
+        nn.init.xavier_uniform_(model.beta)
+        model.beta_batchnorm = nn.Sequential()
+        model.cuda(gpu_ids[0])
+        
+        losses = AverageMeter()
+        dlosses = AverageMeter() 
+        rlosses = AverageMeter()
+        closses = AverageMeter()
+        distlosses = AverageMeter()
+        trainloader = DataLoader(finetuneds, batch_size=bsz, shuffle=False, num_workers=0)
+        testloader = DataLoader(testds2, batch_size=bsz, shuffle=False, num_workers=0)
+        # memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.stage_2_lr)
+
+        memory_queue = F.softmax(torch.randn(512, n_topic).cuda(gpu_ids[0]), dim=1)
+        print("Coeff   / regul: {:.5f} - recon: {:.5f} - c: {:.5f} - dist: {:.5f} ".format(args.coeff_2_regul, 
+                                                                                            args.coeff_2_recon,
+                                                                                            args.coeff_2_cons,
+                                                                                            args.coeff_2_dist))
+        logger.info("Coeff   / regul: {:.5f} - recon: {:.5f} - c: {:.5f} - dist: {:.5f} ".format(args.coeff_2_regul,
+                                                                                                 args.coeff_2_recon,
+                                                                                                 args.coeff_2_cons,
+                                                                                                 args.coeff_2_dist))
+        for epoch in range(50):
+            model.train()
+            model.encoder.eval()
+            for batch_idx, batch in enumerate(trainloader):
+                org_input, pos_input, org_bow, pos_bow = batch
+                org_input = org_input.cuda(gpu_ids[0])
+                org_bow = org_bow.cuda(gpu_ids[0])
+                pos_input = pos_input.cuda(gpu_ids[0])
+                pos_bow = pos_bow.cuda(gpu_ids[0])
+
+                batch_size = org_input_ids.size(0)
+
+                org_dists, org_topic_logit = model.decode(org_input)
+                pos_dists, pos_topic_logit = model.decode(pos_input)
+
+                org_topic = F.softmax(org_topic_logit, dim=1)
+                pos_topic = F.softmax(pos_topic_logit, dim=1)
+                
+                recons_loss = torch.mean(-torch.sum(torch.log(org_dists + 1E-10) * (org_bow * weight_cands), axis=1), axis=0)
+                recons_loss += torch.mean(-torch.sum(torch.log((1-org_dists) + 1E-10) * ((1-org_bow) * weight_cands), axis=1), axis=0)
+                recons_loss += torch.mean(-torch.sum(torch.log(pos_dists + 1E-10) * (pos_bow * weight_cands), axis=1), axis=0)
+                recons_loss += torch.mean(-torch.sum(torch.log((1-pos_dists) + 1E-10) * ((1-pos_bow) * weight_cands), axis=1), axis=0)
+                recons_loss *= 0.5
+
+                # consistency loss
+                pos_sim = torch.sum(org_topic * pos_topic, dim=-1)
+                cons_loss = -pos_sim.mean()
+
+                # distribution loss
+                # batchmean
+                distmatch_loss = dist_match_loss(torch.cat((org_topic, pos_topic), dim=0), dirichlet_alpha_2)
+                
+
+                loss = args.coeff_2_recon * recons_loss + \
+                    args.coeff_2_cons * cons_loss + \
+                    args.coeff_2_dist * distmatch_loss 
+                
+                losses.update(loss.item(), bsz)
+                closses.update(cons_loss.item(), bsz)
+                rlosses.update(recons_loss.item(), bsz)
+                distlosses.update(distmatch_loss.item(), bsz)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+            print("Epoch-{} / recon: {:.5f} - dist: {:.5f} - cons: {:.5f}".format(epoch, rlosses.avg, distlosses.avg, closses.avg))
+            logger.info("Epoch-{} / recon: {:.5f} - dist: {:.5f} - cons: {:.5f}".format(epoch, rlosses.avg, distlosses.avg, closses.avg))
+            wandb.log({"recon_loss": rlosses.avg, "dist_loss": distlosses.avg, "cons_loss": closses.avg})
+
+        print("------- Evaluation results -------")
+        logger.info("------- Evaluation results -------")
+        all_list = {}
+        for e, i in enumerate(model.beta.cpu().topk(15, dim=1).indices):
+            word_list = []
+            for j in i:
+                word_list.append(vocab_dict_reverse[j.item()])
+            all_list[e] = word_list
+            print("topic-{}".format(e), word_list)
+            logger.info("topic-{}".format(e))
+            logger.info(word_list)
+
+        topic_words_list = list(all_list.values())
+        now = datetime.now().strftime('%y%m%d_%H%M%S')
+        results = get_topic_qualities(topic_words_list, palmetto_dir=args.palmetto_dir,
+                                    reference_corpus=[doc.split() for doc in trainds.preprocess_ctm(trainds.nonempty_text)],
+                                    filename=f'results/{now}.txt')
+        train_theta = []
+        test_theta = []
+        for batch_idx, batch in tqdm(enumerate(trainloader)):
+            org_input, _, org_bow, _ = batch
+            org_input = org_input.cuda(gpu_ids[0])
+            org_bow = org_bow.cuda(gpu_ids[0])
+            # pos_input = pos_input.cuda(gpu_ids[0])
+            # pos_bow = pos_bow.cuda(gpu_ids[0])
+
+            batch_size = org_input_ids.size(0)
+
+            org_dists, org_topic_logit = model.decode(org_input)
+            # pos_dists, pos_topic_logit = model.decode(pos_input)
+
+            org_topic = F.softmax(org_topic_logit, dim=1)
+            # pos_topic = F.softmax(pos_topic_logit, dim=1)
+            
+            train_theta.append(org_topic.detach().cpu())
+        
+        train_theta = np.concatenate(train_theta, axis=0)
+
+        for batch_idx, batch in tqdm(enumerate(testloader)): 
+            org_input, org_bow = batch
+            org_input = org_input.cuda(gpu_ids[0])
+            org_bow = org_bow.cuda(gpu_ids[0])
+            # pos_input = pos_input.cuda(gpu_ids[0])
+            # pos_bow = pos_bow.cuda(gpu_ids[0])
+
+            batch_size = org_input_ids.size(0)
+
+            org_dists, org_topic_logit = model.decode(org_input)
+            # pos_dists, pos_topic_logit = model.decode(pos_input)
+
+            org_topic = F.softmax(org_topic_logit, dim=1)
+            # pos_topic = F.softmax(pos_topic_logit, dim=1)
+            
+            test_theta.append(org_topic.detach().cpu())
+        
+        test_theta = np.concatenate(test_theta, axis=0)
+        
+        classification_res = evaluate_classification(train_theta, test_theta, textData.target_filtered, textData.test_targets, tune=True, logger=logger)
+        clustering_res = evaluate_clustering(test_theta, textData.test_targets)
+        
+        results.update(classification_res)
+        results.update(clustering_res)
+        
+        
+        if should_measure_hungarian:
+            topic_dist = torch.empty((0, n_topic))
+            model.eval()
+            evalloader = DataLoader(finetuneds, batch_size=bsz, shuffle=False, num_workers=0)
+            non_empty_text_index = [i for i, text in enumerate(textData.data) if len(text) != 0]
+            assert len(finetuneds) == len(non_empty_text_index)
+            with torch.no_grad():
+                for batch in tqdm(evalloader):
+                    org_input, _, org_bow, __ = batch
+                    org_input = org_input.cuda(gpu_ids[0])
+                    org_dists, org_topic_logit = model.decode(org_input)
+                    org_topic = F.softmax(org_topic_logit, dim=1)
+                    topic_dist = torch.cat((topic_dist, org_topic.detach().cpu()), 0)
+
+        print(results)
+        logger.info(results)
+        wandb.log(results)
+        print()
+        results_list.append(results)
+
+    results_df = pd.DataFrame(results_list)
+    print(results_df)
+    print('mean')
+    print(results_df.mean())
+    print('std')
+    print(results_df.std())
+    
+    
+    logger.info(results_df)
+    logger.info('mean')
+    logger.info(results_df.mean())
+    logger.info('std')
+    logger.info(results_df.std())
+    
+    wandb.log({'mean_acc': results_df.mean()['acc']})
+    wandb.log({'mean_f1': results_df.mean()['macro-F1']})
+    wandb.log({'mean_purity': results_df.mean()['Purity']})
+    wandb.log({'mean_NMI': results_df.mean()['NMI']})
+    wandb.log({'mean_CV': results_df.mean()['CV_wiki']})
+    wandb.log({'mean_diversity': results_df.mean()['diversity']})
+    wandb.log({'mean_NPMI': results_df.mean()['npmi_wiki']})
+    wandb.log({'mean_cp': results_df.mean()['cp_wiki']})
+    wandb.log({'mean_sim': results_df.mean()['sim_w2v']})
+    
+    wandb.log({'std_acc': results_df.std()['acc']})
+    wandb.log({'std_f1': results_df.std()['macro-F1']})
+    wandb.log({'std_purity': results_df.std()['Purity']})
+    wandb.log({'std_NMI': results_df.std()['NMI']})
+    wandb.log({'std_CV': results_df.std()['CV_wiki']})
+    wandb.log({'std_diversity': results_df.std()['diversity']})
+    wandb.log({'std_NPMI': results_df.std()['npmi_wiki']})
+    wandb.log({'std_cp': results_df.std()['cp_wiki']})
+    wandb.log({'std_sim': results_df.std()['sim_w2v']})
+
+    if args.result_file is not None:
+        result_filename = f'{current_run_dir}/{args.result_file}'
+    else:
+        result_filename = f'{current_run_dir}/{now}.tsv'
+
+    results_df.to_csv(result_filename, sep='\t')
