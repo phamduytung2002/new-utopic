@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.metrics import f1_score, accuracy_score
 from sklearn.svm import SVC
 from sklearn import metrics
+import wandb
 
 word2vec_google = gensim.downloader.load('word2vec-google-news-300')
 
@@ -40,7 +41,7 @@ def evaluate_clustering(theta, labels):
     preds = np.argmax(theta, axis=1)
     return clustering_metric(labels, preds)
 
-def evaluate_classification(train_theta, test_theta, train_labels, test_labels, classifier='SVM', gamma='scale', tune=False):
+def evaluate_classification(train_theta, test_theta, train_labels, test_labels, classifier='SVM', gamma='scale', tune=False, logger=None):
     if tune:
         results = {
             'acc': 0,
@@ -48,9 +49,10 @@ def evaluate_classification(train_theta, test_theta, train_labels, test_labels, 
         }
         for C in [0.1, 1, 10, 100, 1000]:
             for gamma in ['scale', 'auto', 10, 1, 0.1, 0.01]:
-                print(f'C: {C}, gamma: {gamma}')
                 for kernel in ['rbf', 'linear']:
                     print(f'C: {C}, gamma: {gamma}, kernel: {kernel}')
+                    if logger:
+                        logger.info(f'C: {C}, gamma: {gamma}, kernel: {kernel}')
                     if classifier == 'SVM':
                         clf = SVC(C=C, kernel=kernel, gamma=gamma)
                     else:
@@ -67,6 +69,9 @@ def evaluate_classification(train_theta, test_theta, train_labels, test_labels, 
                         for key in results
                     }
                     print(f'Accuracy: {this_results["acc"]}, Macro-F1: {this_results["macro-F1"]}')
+                    if logger:
+                        logger.info(f'Accuracy: {this_results["acc"]}, Macro-F1: {this_results["macro-F1"]}')
+                    wandb.log(this_results)
     else:
         if classifier == 'SVM':
             clf = SVC(gamma=gamma)
