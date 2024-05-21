@@ -117,13 +117,13 @@ class AGNewsData():
         self.data = []
         self.targets = []
         
-        self.data = read_text(os.path.join('data', 'AGNews', 'train_texts.txt'))
+        self.data = read_text(os.path.join('data', 'AGNews', 'raw_train_texts.txt'))
         self.targets = np.loadtxt(os.path.join('data', 'AGNews', 'train_labels.txt'), dtype=int)
         self.bow = scipy.sparse.load_npz(os.path.join('data', 'AGNews', 'train_bow.npz'))
         self.vocab = read_text(os.path.join('data', 'AGNews', 'vocab.txt'))
         # self.contextual_embed = np.load(os.path.join('data', 'AGNews', 'train_bert.npz'))['arr_0']
         
-        self.test_data = read_text(os.path.join('data', 'AGNews', 'test_texts.txt'))
+        self.test_data = read_text(os.path.join('data', 'AGNews', 'raw_test_texts.txt'))
         self.test_targets = np.loadtxt(os.path.join('data', 'AGNews', 'test_labels.txt'), dtype=int)
         self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'AGNews', 'test_bow.npz'))
         # self.test_contextual_embed = np.load(os.path.join('data', 'AGNews', 'test_bert.npz'))['arr_0']
@@ -144,13 +144,13 @@ class YahooData():
         self.data = []
         self.targets = []
         
-        self.data = read_text(os.path.join('data', 'YahooAnswers', 'train_texts.txt'))
+        self.data = read_text(os.path.join('data', 'YahooAnswers', 'raw_train_texts.txt'))
         self.targets = np.loadtxt(os.path.join('data', 'YahooAnswers', 'train_labels.txt'), dtype=int)
         self.bow = scipy.sparse.load_npz(os.path.join('data', 'YahooAnswers', 'train_bow.npz'))
         self.vocab = read_text(os.path.join('data', 'YahooAnswers', 'vocab.txt'))
         # self.contextual_embed = np.load(os.path.join('data', 'YahooAnswers', 'train_bert.npz'))['arr_0']
         
-        self.test_data = read_text(os.path.join('data', 'YahooAnswers', 'test_texts.txt'))
+        self.test_data = read_text(os.path.join('data', 'YahooAnswers', 'raw_test_texts.txt'))
         self.test_targets = np.loadtxt(os.path.join('data', 'YahooAnswers', 'test_labels.txt'), dtype=int)
         self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'YahooAnswers', 'test_bow.npz'))
         # self.test_contextual_embed = np.load(os.path.join('data', 'YahooAnswers', 'test_bert.npz'))['arr_0']
