@@ -9,6 +9,7 @@ from torchtools.optim import RangerLars
 import itertools
 from word_embedding_utils import *
 from collections import OrderedDict
+import pickle
 
 from sentence_transformers import SentenceTransformer
 from evaluation import evaluate_classification, evaluate_clustering
@@ -314,6 +315,7 @@ def remove_dup(seq):
 RESULT_DIR = 'results'
 DATA_DIR = 'data'
 
+
 if __name__ == "__main__":
     current_time = miscellaneous.get_current_datetime()
     current_run_dir = os.path.join(RESULT_DIR, current_time)
@@ -321,8 +323,6 @@ if __name__ == "__main__":
     
     logger = log.setup_logger(
         'main', os.path.join(current_run_dir, 'main.log'))
-
-
 
     parser = _parse_args()
     args = parser.parse_args()
@@ -354,142 +354,43 @@ if __name__ == "__main__":
     bert_name_short = bert_name.split('/')[-1]
     gpu_ids = args.gpus
 
-    skip_stage_1 = (args.stage_1_ckpt is not None)
+    # skip_stage_1 = (args.stage_1_ckpt is not None)
+
+    # load stage 1 saved
+    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
+    miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
     trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
-    basesim_path = f"./{current_run_dir}/{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl"
-    if os.path.isfile(basesim_path) == False:
-        model = SentenceTransformer(bert_name.split('/')[-1], device='cuda')
-        base_result_list = []
-        for text in tqdm_notebook(trainds.nonempty_text):
-            base_result_list.append(model.encode(text))
-            
-        base_result_embedding = np.stack(base_result_list)
-        basereduced_norm = F.normalize(torch.tensor(base_result_embedding), dim=-1)
-        basesim_matrix = torch.mm(basereduced_norm, basereduced_norm.t())
-        ind = np.diag_indices(basesim_matrix.shape[0])
-        basesim_matrix[ind[0], ind[1]] = torch.ones(basesim_matrix.shape[0]) * -1
-        torch.save(basesim_matrix, basesim_path)
-    else:
-        basesim_matrix = torch.load(basesim_path)
 
+    word_candidates = []
+    with open(os.path.join(model_stage1_name, 'word_candidates'), 'r') as file:
+        word_candidates = file.read().splitlines()
+    print(word_candidates)
 
-    model_stage1_name = args.stage_1_ckpt
     new_state_dict = OrderedDict()
-    for k, v in torch.load(model_stage1_name).items():
+    for k, v in torch.load(os.path.join(model_stage1_name, 'checkpoint.ckpt')).items():
         if k.startswith("module."):
             new_state_dict[k[7:]] = v  # Remove 'module.' prefix
         else:
             new_state_dict[k] = v
-
     model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
     model.cuda(gpu_ids[0])
-
     model.load_state_dict(new_state_dict, strict=True)
-    temp_basesim_matrix = copy.deepcopy(basesim_matrix)
-    finetuneds = FinetuneDataset(trainds, temp_basesim_matrix, ratio=1, k=1)
-    memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
-    result_list = []
 
-    model.eval()
-    # torch.set_printoptions(threshold=10000)
-    with torch.no_grad():
-        for idx, batch in enumerate(tqdm_notebook(memoryloader)):        
-            org_input, _, _, _ = batch
-            org_input_ids = org_input['input_ids'].to(gpu_ids[0])
-            org_attention_mask = org_input['attention_mask'].to(gpu_ids[0])
-            topic, embed = model(org_input_ids, org_attention_mask, return_topic = True)
-            result_list.append(topic)
-    result_embedding = torch.cat(result_list)
-    _, result_topic = torch.max(result_embedding, 1)
+    basesim_path = os.path.join(model_stage1_name, f'{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl')
+    basesim_matrix = torch.load(basesim_path)
+    finetuneds = Stage2Dataset(model.encoder, trainds, basesim_matrix, word_candidates, lemmatize=True)    
+    testds = BertDataset(bert=bert_name, text_list=textData.test_data, N_word=n_word, vectorizer=None, lemmatize=True)
+    testds2 = Stage2TestDataset(model.encoder, testds, word_candidates, lemmatize=True)
 
-    d = {'text': trainds.preprocess_ctm(trainds.nonempty_text), 
-        'cluster_label': result_topic.cpu().numpy()}
-    cluster_df = pd.DataFrame(data=d)
+    vocab_dict = finetuneds.vectorizer.vocabulary_
+    vocab_dict_reverse = {i:v for v, i in vocab_dict.items()}
+    print(n_word)
+    
+    total_score_cat = np.load(os.path.join(model_stage1_name, 'total_score_cat.npy'))
+    with open(os.path.join(model_stage1_name, 'words_to_idx.pkl'), 'rb') as file:
+        words_to_idx = pickle.load(file)
 
-    docs_per_class = cluster_df.groupby(['cluster_label'], as_index=False).agg({'text': ' '.join})
-
-    count_vectorizer = CountVectorizer(token_pattern=r'\b[a-zA-Z]{2,}\b')
-    # count_vectorizer = CountVectorizer()
-    ctfidf_vectorizer = CTFIDFVectorizer()
-    count = count_vectorizer.fit_transform(docs_per_class.text)
-    ctfidf = ctfidf_vectorizer.fit_transform(count, n_samples=len(cluster_df)).toarray()
-    words = count_vectorizer.get_feature_names()
-
-    # transport to gensim
-    (gensim_corpus, gensim_dict) = vect2gensim(count_vectorizer, count)
-    vocab_list = set(gensim_dict.token2id.keys())
-    stopwords = set(line.strip() for line in open('stopwords_en.txt'))
-
-    normalized = [coherence_normalize(doc) for doc in trainds.nonempty_text]
-    gensim_dict = Dictionary(normalized)
-    resolution_score = (ctfidf - np.min(ctfidf, axis=1, keepdims=True)) / (np.max(ctfidf, axis=1, keepdims=True) - np.min(ctfidf, axis=1, keepdims=True))
-
-    n_word = args.n_word
-    # n_topic_word = n_word / len(docs_per_class.cluster_label.index)
-    n_topic_word = n_word
-    n_topic_word = 15
-
-    topic_word_dict = {}
-    for label in docs_per_class.cluster_label.index:
-        total_score = resolution_score[label]
-        score_higest = total_score.argsort()
-        score_higest = score_higest[::-1]
-        topic_word_list = [words[index] for index in score_higest]
-        
-        topic_word_list = [word for word in topic_word_list if len(word) >= 3]    
-        topic_word_list = [word for word in topic_word_list if word not in stopwords]    
-        topic_word_list = [word for word in topic_word_list if word in gensim_dict.token2id]
-        topic_word_dict[docs_per_class.cluster_label.iloc[label]] = topic_word_list[:int(n_topic_word)]
-        
-    for key in topic_word_dict:
-        print(f"{key}: {topic_word_dict[key]},")
-        logger.info(f"{key}: {topic_word_dict[key]},")
-    topic_words_list = list(topic_word_dict.values())
-
-    topic_words_list = list(topic_word_dict.values())
-    qt = TopicModelDataPreparationNoNumber("sentence-transformers/all-MiniLM-L6-v2")
-    sp = WhiteSpacePreprocessing(textData.data, stopwords_language='english')
-    preprocessed_documents, unpreprocessed_corpus, vocab, retained_indices = sp.preprocess()
-    vectorizer_model = CountVectorizer(stop_words="english")
-    lemmatizer = WordNetLemmatizer()
-    preprocessed_documents_lemmatized = [' '.join([lemmatizer.lemmatize(w) for w in doc.split()]) for doc in preprocessed_documents]
-
-    document_topic = get_document_topic(topic_words_list, preprocessed_documents_lemmatized)
-    train_target_filtered = textData.targets.squeeze()[retained_indices]
-    flat_predict = torch.tensor(np.argmax(document_topic, axis=1))
-    flat_target = torch.tensor(train_target_filtered).to(flat_predict.device)
-    num_samples = flat_predict.shape[0]
-    reordered_preds = torch.zeros(num_samples).to(flat_predict.device)
-
-    normalized = [coherence_normalize(doc) for doc in trainds.nonempty_text]
-    gensim_dict = Dictionary(normalized)
-
-    n_word = args.n_word
-    n_topic_word = n_word
-
-    words_to_idx = {k: v for v, k in enumerate(words)}
-    topic_word_dict = {}
-    topic_score_dict = {}
-    total_score_cat = []
-    for label in docs_per_class.cluster_label.index:
-        total_score = resolution_score[label]
-        score_higest = total_score.argsort()
-        score_higest = score_higest[::-1]
-        topic_word_list = [words[index] for index in score_higest]
-        
-        total_score_cat.append(total_score)
-        # topic_word_list = [word for word in topic_word_list if word not in stopwords]    
-        topic_word_list = [word for word in topic_word_list if word in gensim_dict.token2id]
-        # topic_word_list = [word for word in topic_word_list if len(word) >= 3]    
-        topic_word_dict[docs_per_class.cluster_label.iloc[label]] = topic_word_list[:int(n_topic_word)]
-        topic_score_dict[docs_per_class.cluster_label.iloc[label]] = [total_score[words_to_idx[top_word]] for top_word in topic_word_list[:int(n_topic_word)]]
-    total_score_cat = np.stack(total_score_cat, axis = 0)
-
-    topic_words_list = list(topic_word_dict.values())
-    topic_word_set = list(itertools.chain.from_iterable(pd.DataFrame.from_dict(topic_word_dict).values))
-    word_candidates = remove_dup(topic_word_set)[:n_word]
-    n_word = len(word_candidates)
 
     weight_candidates = {}
     for candidate in word_candidates:
@@ -498,23 +399,16 @@ if __name__ == "__main__":
     weight_cand_to_idx = {k: v for v, k in enumerate(list(weight_candidates.keys()))}
     weight_cand_matrix = np.array(list(weight_candidates.values()))
 
-    finetuneds = Stage2Dataset(model.encoder, trainds, basesim_matrix, word_candidates, lemmatize=True)    
-    testds = BertDataset(bert=bert_name, text_list=textData.test_data, N_word=n_word, vectorizer=None, lemmatize=True)
-    testds2 = Stage2TestDataset(model.encoder, testds, word_candidates, lemmatize=True)
-
-    kldiv = torch.nn.KLDivLoss(reduction='batchmean')
-    vocab_dict = finetuneds.vectorizer.vocabulary_
-    vocab_dict_reverse = {i:v for v, i in vocab_dict.items()}
-    print(n_word)
-
+    # weight_cand_matrix = np.load(os.path.join(model_stage1_name, 'weight_cand_matrix.npy'))
     weight_cands = torch.tensor(weight_cand_matrix.max(axis=1)).cuda(gpu_ids[0]).float()
 
     results_list = []
 
+    # run stage 2
     for i in range(args.stage_2_repeat):
         model = ContBertTopicExtractorAE(N_topic=n_topic, N_word=args.n_word, bert=bert_name, bert_dim=384)
         new_state_dict = OrderedDict()
-        for k, v in torch.load(model_stage1_name).items():
+        for k, v in torch.load(os.path.join(model_stage1_name, 'checkpoint.ckpt')).items():
             if k.startswith("module."):
                 new_state_dict[k[7:]] = v  # Remove 'module.' prefix
             else:
@@ -532,7 +426,6 @@ if __name__ == "__main__":
         distlosses = AverageMeter()
         trainloader = DataLoader(finetuneds, batch_size=bsz, shuffle=False, num_workers=0)
         testloader = DataLoader(testds2, batch_size=bsz, shuffle=False, num_workers=0)
-        # memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.stage_2_lr)
 
         memory_queue = F.softmax(torch.randn(512, n_topic).cuda(gpu_ids[0]), dim=1)
@@ -544,7 +437,7 @@ if __name__ == "__main__":
                                                                                                  args.coeff_2_recon,
                                                                                                  args.coeff_2_cons,
                                                                                                  args.coeff_2_dist))
-        for epoch in range(50):
+        for epoch in range(args.epochs_2):
             model.train()
             model.encoder.eval()
             for batch_idx, batch in enumerate(trainloader):
@@ -554,7 +447,7 @@ if __name__ == "__main__":
                 pos_input = pos_input.cuda(gpu_ids[0])
                 pos_bow = pos_bow.cuda(gpu_ids[0])
 
-                batch_size = org_input_ids.size(0)
+                batch_size = org_input.size(0)
 
                 org_dists, org_topic_logit = model.decode(org_input)
                 pos_dists, pos_topic_logit = model.decode(pos_input)
@@ -610,23 +503,16 @@ if __name__ == "__main__":
         now = datetime.now().strftime('%y%m%d_%H%M%S')
         results = get_topic_qualities(topic_words_list, palmetto_dir=args.palmetto_dir,
                                     reference_corpus=[doc.split() for doc in trainds.preprocess_ctm(trainds.nonempty_text)],
-                                    filename=f'results/{now}.txt')
+                                    filename=os.path.join(current_run_dir, f'{str(now)}.txt'))
         train_theta = []
         test_theta = []
         for batch_idx, batch in tqdm(enumerate(trainloader)):
             org_input, _, org_bow, _ = batch
             org_input = org_input.cuda(gpu_ids[0])
             org_bow = org_bow.cuda(gpu_ids[0])
-            # pos_input = pos_input.cuda(gpu_ids[0])
-            # pos_bow = pos_bow.cuda(gpu_ids[0])
-
-            batch_size = org_input_ids.size(0)
-
+            batch_size = org_input.size(0)
             org_dists, org_topic_logit = model.decode(org_input)
-            # pos_dists, pos_topic_logit = model.decode(pos_input)
-
             org_topic = F.softmax(org_topic_logit, dim=1)
-            # pos_topic = F.softmax(pos_topic_logit, dim=1)
             
             train_theta.append(org_topic.detach().cpu())
         
@@ -634,18 +520,11 @@ if __name__ == "__main__":
 
         for batch_idx, batch in tqdm(enumerate(testloader)): 
             org_input, org_bow = batch
+            batch_size = org_input.size(0)
             org_input = org_input.cuda(gpu_ids[0])
             org_bow = org_bow.cuda(gpu_ids[0])
-            # pos_input = pos_input.cuda(gpu_ids[0])
-            # pos_bow = pos_bow.cuda(gpu_ids[0])
-
-            batch_size = org_input_ids.size(0)
-
             org_dists, org_topic_logit = model.decode(org_input)
-            # pos_dists, pos_topic_logit = model.decode(pos_input)
-
             org_topic = F.softmax(org_topic_logit, dim=1)
-            # pos_topic = F.softmax(pos_topic_logit, dim=1)
             
             test_theta.append(org_topic.detach().cpu())
         

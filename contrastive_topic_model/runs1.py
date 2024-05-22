@@ -1,17 +1,14 @@
 import os
 import copy
 import math
-import argparse
 import string
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtools.optim import RangerLars
-from collections import OrderedDict
 from contextualized_topic_models.utils.data_preparation import TopicModelDataPreparation
 from gensim.utils import deaccent
 from nltk.corpus import stopwords as stop_words
-
 
 from scipy.optimize import linear_sum_assignment as linear_assignment
 import matplotlib.pyplot as plt
@@ -19,7 +16,6 @@ from sentence_transformers import SentenceTransformer
 
 import numpy as np
 from torch.utils.data import DataLoader
-
 from sklearn.feature_extraction.text import CountVectorizer
 from utils.miscellaneous import AverageMeter
 from collections import OrderedDict
@@ -29,40 +25,21 @@ from pytorch_transformers import *
 from tqdm import tqdm
 import scipy.sparse as sp
 from data import *
+from word_embedding_utils import *
 from model import ContBertTopicExtractorAE
 import warnings
 import wandb
-import logging
 from scipy.linalg import qr
 
-
 from utils import miscellaneous
-from utils.config import _parse_args, save_config, load_config
+from utils.config import _parse_args, save_config
 from utils import log
+import pickle, json
 
 warnings.filterwarnings("ignore")
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"  # Arrange GPU devices starting from 0
 os.environ["CUDA_VISIBLE_DEVICES"]= "0,1"
-
-
-def _hungarian_match(flat_preds, flat_targets, num_samples, class_num):  
-    num_k = class_num
-    num_correct = np.zeros((num_k, num_k))
-  
-    for c1 in range(0, num_k):
-        for c2 in range(0, num_k):
-            votes = int(((flat_preds == c1) * (flat_targets == c2)).sum())
-            num_correct[c1, c2] = votes
-  
-    match = linear_assignment(num_samples - num_correct)
-    match = np.array(list(zip(*match)))
-    res = []
-    for out_c, gt_c in match:
-        res.append((out_c, gt_c))
-  
-    return res
-
 
 class WhiteSpacePreprocessing():
     def __init__(self, documents, stopwords_language="english", vocabulary_size=2000):
@@ -99,7 +76,6 @@ class WhiteSpacePreprocessing():
         vocabulary = list(set([item for doc in preprocessed_docs for item in doc.split()]))
 
         return preprocessed_docs, unpreprocessed_docs, vocabulary, retained_indices
-
 
 class TopicModelDataPreparationNoNumber(TopicModelDataPreparation):
     def fit(self, text_for_contextual, text_for_bow, labels=None, wordlist=None):
@@ -164,7 +140,6 @@ def dist_match_loss(hiddens, alpha=1.0):
     loss_dist_match = get_swd_loss(hiddens, rand_w, alpha)
     return loss_dist_match
 
-
 def get_swd_loss(states, rand_w, alpha=1.0):
     device = states.device
     states_shape = states.shape
@@ -177,22 +152,25 @@ def get_swd_loss(states, rand_w, alpha=1.0):
     states_prior_t, _ = torch.sort(states_prior.t(), dim=1) # (dim, bsz)
     return torch.mean(torch.sum((states_prior_t - states_t)**2, axis=0))
 
+def remove_dup(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
+
 RESULT_DIR = 'results'
 DATA_DIR = 'data'
 
 
 if __name__=="__main__":
+    # set up logger and args parser
     current_time = miscellaneous.get_current_datetime()
     current_run_dir = os.path.join(RESULT_DIR, current_time)
     miscellaneous.create_folder_if_not_exist(current_run_dir)
     parser = _parse_args()
-
     args = parser.parse_args()
-    wandb.init(project="utopic", config=args)
+    wandb.init(project="utopic_stage1", config=args)
     logger = log.setup_logger(
         'main', os.path.join(current_run_dir, 'main.log'))
-
-
     save_config(args, os.path.join(current_run_dir, 'config.txt'))
     miscellaneous.seedEverything(args.seed)
 
@@ -200,13 +178,10 @@ if __name__=="__main__":
     bsz = args.bsz
     epochs_1 = args.epochs_1
     epochs_2 = args.epochs_2
-
     n_cluster = args.n_cluster
     n_topic = args.n_topic if (args.n_topic is not None) else n_cluster
     args.n_topic = n_topic
-
     textData, should_measure_hungarian = data_load(args.dataset)
-
     ema_alpha = 0.99
     n_word = args.n_word
     if args.dirichlet_alpha_1 is None:
@@ -217,16 +192,18 @@ if __name__=="__main__":
         dirichlet_alpha_2 = dirichlet_alpha_1
     else:
         dirichlet_alpha_2 = args.dirichlet_alpha_2
-        
     bert_name = args.base_model
     bert_name_short = bert_name.split('/')[-1]
     gpu_ids = args.gpus
+    # skip_stage_1 = (args.stage_1_ckpt is not None)
+    
+    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
+    miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
-    skip_stage_1 = (args.stage_1_ckpt is not None)
 
-
+    # data preparation
     trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
-    basesim_path = f"./save/{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl"
+    basesim_path = os.path.join(model_stage1_name, f'{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl')
     if os.path.isfile(basesim_path) == False:
         model = SentenceTransformer(bert_name.split('/')[-1], device='cuda')
         base_result_list = []
@@ -242,98 +219,98 @@ if __name__=="__main__":
     else:
         basesim_matrix = torch.load(basesim_path)
 
-    if not skip_stage_1:
-        model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
-        if torch.cuda.device_count() > 1:
-            model = torch.nn.DataParallel(model, device_ids=gpu_ids)
-        model.cuda(gpu_ids[0])
+    model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
+    if torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model, device_ids=gpu_ids)
+    model.cuda(gpu_ids[0])
 
 
-        losses = AverageMeter()
-        closses = AverageMeter() 
-        dlosses = AverageMeter() 
-        rlosses = AverageMeter() 
-        criterion = nn.CrossEntropyLoss()
+    # training stage 1
+    losses = AverageMeter()
+    closses = AverageMeter() 
+    dlosses = AverageMeter() 
+    rlosses = AverageMeter() 
+    criterion = nn.CrossEntropyLoss()
 
-        temp_basesim_matrix = copy.deepcopy(basesim_matrix)
-        finetuneds = FinetuneDataset(trainds, temp_basesim_matrix, ratio=1, k=1)
-        trainloader = DataLoader(finetuneds, batch_size=bsz, shuffle=False, num_workers=0)
-        memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
+    temp_basesim_matrix = copy.deepcopy(basesim_matrix)
+    finetuneds = FinetuneDataset(trainds, temp_basesim_matrix, ratio=1, k=1)
+    trainloader = DataLoader(finetuneds, batch_size=bsz, shuffle=False, num_workers=0)
+    memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
 
-        optimizer = RangerLars(model.parameters(), lr=0.001, weight_decay=0.0001)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+    optimizer = RangerLars(model.parameters(), lr=0.001, weight_decay=0.0001)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
 
-        global_step = 0
-        memory_queue = F.softmax(torch.randn(512, n_cluster).cuda(gpu_ids[0]), dim=1)
-        for epoch in range(epochs_1):
-            torch.save(model.state_dict(), f'./trained_model/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{epoch}e.ckpt')
-            model.train()
-            try:
-                model.module.encoder.eval()
-            except:
-                model.encoder.eval()
-            #ema_model.train()
-            tbar = tqdm(trainloader)
-            for batch_idx, batch in enumerate(tbar):       
-                org_input, pos_input, _, _ = batch
-                org_input_ids = org_input['input_ids'].cuda(gpu_ids[0])
-                org_attention_mask = org_input['attention_mask'].cuda(gpu_ids[0])
-                pos_input_ids = pos_input['input_ids'].cuda(gpu_ids[0])
-                pos_attention_mask = pos_input['attention_mask'].cuda(gpu_ids[0])
-                batch_size = org_input_ids.size(0)
+    global_step = 0
+    memory_queue = F.softmax(torch.randn(512, n_cluster).cuda(gpu_ids[0]), dim=1)
+    for epoch in range(epochs_1):
+        model.train()
+        try:
+            model.module.encoder.eval()
+        except:
+            model.encoder.eval()
+        #ema_model.train()
+        tbar = tqdm(trainloader)
+        for batch_idx, batch in enumerate(tbar):       
+            org_input, pos_input, _, _ = batch
+            org_input_ids = org_input['input_ids'].cuda(gpu_ids[0])
+            org_attention_mask = org_input['attention_mask'].cuda(gpu_ids[0])
+            pos_input_ids = pos_input['input_ids'].cuda(gpu_ids[0])
+            pos_attention_mask = pos_input['attention_mask'].cuda(gpu_ids[0])
+            batch_size = org_input_ids.size(0)
 
-                all_input_ids = torch.cat((org_input_ids, pos_input_ids), dim=0)
-                all_attention_masks = torch.cat((org_attention_mask, pos_attention_mask), dim=0)
-                all_topics, _ = model(all_input_ids, all_attention_masks, return_topic=True)
+            all_input_ids = torch.cat((org_input_ids, pos_input_ids), dim=0)
+            all_attention_masks = torch.cat((org_attention_mask, pos_attention_mask), dim=0)
+            all_topics, _ = model(all_input_ids, all_attention_masks, return_topic=True)
 
-                orig_topic, pos_topic = torch.split(all_topics, len(all_topics) // 2)
-                pos_sim = torch.sum(orig_topic * pos_topic, dim=-1)
+            orig_topic, pos_topic = torch.split(all_topics, len(all_topics) // 2)
+            pos_sim = torch.sum(orig_topic * pos_topic, dim=-1)
 
-                # consistency loss
-                consistency_loss = -pos_sim.mean()
+            # consistency loss
+            consistency_loss = -pos_sim.mean()
 
-                # distribution matching loss
-                memory_queue = torch.cat((memory_queue.detach(), all_topics), dim=0)[all_topics.size(0):]
-                distmatch_loss = dist_match_loss(memory_queue, dirichlet_alpha_1)
-                loss = args.coeff_1_sim * consistency_loss + \
-                    args.coeff_1_dist * distmatch_loss
+            # distribution matching loss
+            memory_queue = torch.cat((memory_queue.detach(), all_topics), dim=0)[all_topics.size(0):]
+            distmatch_loss = dist_match_loss(memory_queue, dirichlet_alpha_1)
+            loss = args.coeff_1_sim * consistency_loss + \
+                args.coeff_1_dist * distmatch_loss
 
-                losses.update(loss.item(), bsz)
-                closses.update(consistency_loss.item(), bsz)
-                dlosses.update(distmatch_loss.item(), bsz)
+            losses.update(loss.item(), bsz)
+            closses.update(consistency_loss.item(), bsz)
+            dlosses.update(distmatch_loss.item(), bsz)
 
-                tbar.set_description("Epoch-{} / consistency: {:.5f} - dist: {:.5f}".format(epoch, 
-                                                                                            closses.avg, 
-                                                                                            dlosses.avg), refresh=True)
-                tbar.refresh()
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                wandb.log({"loss": losses.avg, "consistency_loss": closses.avg, "distmatch_loss": dlosses.avg})
-                # global_step += 1
-                # if global_step==10:
-                #     break
-            scheduler.step()
-            logger.info("Epoch-{} / consistency: {:.5f} - dist: {:.5f}".format(epoch, closses.avg, dlosses.avg))
+            tbar.set_description("Epoch-{} / consistency: {:.5f} - dist: {:.5f}".format(epoch, 
+                                                                                        closses.avg, 
+                                                                                        dlosses.avg), refresh=True)
+            tbar.refresh()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        model_stage1_name = f'./trained_model/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{epoch}e.ckpt'
-        torch.save(model.state_dict(), model_stage1_name)
+            wandb.log({"loss": losses.avg, "consistency_loss": closses.avg, "distmatch_loss": dlosses.avg})
+            # global_step += 1
+            # if global_step==10:
+            #     break
+        scheduler.step()
+        logger.info("Epoch-{} / consistency: {:.5f} - dist: {:.5f}".format(epoch, closses.avg, dlosses.avg))
 
-
-    else:
-        model_stage1_name = args.stage_1_ckpt
-        new_state_dict = OrderedDict()
-        for k, v in torch.load(model_stage1_name).items():
-            if k.startswith("module."):
-                new_state_dict[k[7:]] = v  # Remove 'module.' prefix
-            else:
-                new_state_dict[k] = v
-        model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
-        model.cuda(gpu_ids[0])
-        model.load_state_dict(new_state_dict, strict=True)
+    torch.save(model.state_dict(), os.path.join(model_stage1_name, 'checkpoint.ckpt'))
+    wandb.log({"stage_1_model": model_stage1_name})
 
 
+
+    # new_state_dict = OrderedDict()
+    # for k, v in torch.load(os.path.join(model_stage1_name, 'checkpoint.ckpt')).items():
+    #     if k.startswith("module."):
+    #         new_state_dict[k[7:]] = v  # Remove 'module.' prefix
+    #     else:
+    #         new_state_dict[k] = v
+    # model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
+    # model.cuda(gpu_ids[0])
+    # model.load_state_dict(new_state_dict, strict=True)
+
+
+
+    # done training stage 1
     model.eval()
     result_list = []
     with torch.no_grad():
@@ -364,4 +341,85 @@ if __name__=="__main__":
         plt.scatter(numpy_points[:, 0], numpy_points[:, 1], c = color_map, cmap = plt.cm.rainbow, s=1)
     except:
         plt.scatter(numpy_points[:, 0], numpy_points[:, 1], cmap = plt.cm.rainbow, s=1)
-    plt.savefig(f'./{current_run_dir}/{args.dataset}_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{epochs_1}e.png')
+    plt.savefig(os.path.join(model_stage1_name, 'fig.png'))
+    wandb.Image(os.path.join(model_stage1_name, 'fig.png'))
+
+
+
+    # training stage 2
+    d = {'text': trainds.preprocess_ctm(trainds.nonempty_text), 
+        'cluster_label': result_topic.cpu().numpy()}
+    cluster_df = pd.DataFrame(data=d)
+
+    docs_per_class = cluster_df.groupby(['cluster_label'], as_index=False).agg({'text': ' '.join})
+
+    count_vectorizer = CountVectorizer(token_pattern=r'\b[a-zA-Z]{2,}\b')
+    # count_vectorizer = CountVectorizer()
+    ctfidf_vectorizer = CTFIDFVectorizer()
+    count = count_vectorizer.fit_transform(docs_per_class.text)
+    ctfidf = ctfidf_vectorizer.fit_transform(count, n_samples=len(cluster_df)).toarray()
+    words = count_vectorizer.get_feature_names()
+
+    # transport to gensim
+    (gensim_corpus, gensim_dict) = vect2gensim(count_vectorizer, count)
+    vocab_list = set(gensim_dict.token2id.keys())
+    stopwords = set(line.strip() for line in open(os.path.join('data','snowball_stopwords.txt')))
+
+    normalized = [coherence_normalize(doc) for doc in trainds.nonempty_text]
+    gensim_dict = Dictionary(normalized)
+    resolution_score = (ctfidf - np.min(ctfidf, axis=1, keepdims=True)) / (np.max(ctfidf, axis=1, keepdims=True) - np.min(ctfidf, axis=1, keepdims=True))
+
+    n_word = args.n_word
+    n_topic_word = n_word #/ len(docs_per_class.cluster_label.index)
+
+    words_to_idx = {k: v for v, k in enumerate(words)}
+    topic_word_dict = {}
+    topic_score_dict = {}
+    total_score_cat = []
+    for label in docs_per_class.cluster_label.index:
+        total_score = resolution_score[label]
+        score_higest = total_score.argsort()
+        score_higest = score_higest[::-1]
+        topic_word_list = [words[index] for index in score_higest]
+        
+        total_score_cat.append(total_score)
+        topic_word_list = [word for word in topic_word_list if word not in stopwords]    
+        topic_word_list = [word for word in topic_word_list if word in gensim_dict.token2id]
+        topic_word_list = [word for word in topic_word_list if len(word) >= 3]    
+        topic_word_dict[docs_per_class.cluster_label.iloc[label]] = topic_word_list[:int(n_topic_word)]
+        topic_score_dict[docs_per_class.cluster_label.iloc[label]] = [total_score[words_to_idx[top_word]] for top_word in topic_word_list[:int(n_topic_word)]]
+        # print(f"topic {docs_per_class.cluster_label.iloc[label]}: {topic_word_list[:int(n_topic_word)]},")
+    total_score_cat = np.stack(total_score_cat, axis = 0)
+
+    # for key in topic_word_dict:
+    #     print(f"{key}: {topic_word_dict[key]},")
+    #     logger.info(f"{key}: {topic_word_dict[key]},")
+
+    topic_word_set = list(itertools.chain.from_iterable(pd.DataFrame.from_dict(topic_word_dict).values))
+    print(f'topic_word_set: {len(topic_word_set)}')
+    print(f'after remove dup: {len(remove_dup(topic_word_set))}')
+    word_candidates = remove_dup(topic_word_set)[:n_word]
+    print(f'word_candidates: {len(word_candidates)}')
+    
+    
+    with open(os.path.join(model_stage1_name, 'word_candidates'), 'w') as file:
+        for item in word_candidates:
+            file.write(f"{item}\n")
+    np.save(os.path.join(model_stage1_name, 'total_score_cat.npy'), total_score_cat)
+
+    with open(os.path.join(model_stage1_name, 'words_to_idx.pkl'), 'wb') as file:
+        pickle.dump(words_to_idx, file)
+
+    weight_candidates = {}
+
+    try:
+        for candidate in word_candidates:
+            weight_candidates[candidate] = [total_score_cat[label, words_to_idx[candidate]] for label in range(n_cluster)]
+
+        weight_cand_to_idx = {k: v for v, k in enumerate(list(weight_candidates.keys()))}
+        weight_cand_matrix = np.array(list(weight_candidates.values()))
+
+        np.save(os.path.join(model_stage1_name, 'weight_cand_matrix.npy'), weight_cand_matrix)
+    except:
+        logger.info('docs are not spread enough, cant create weight_candidates matrix')
+        print('docs are not spread enough, cant create weight_candidates matrix')
