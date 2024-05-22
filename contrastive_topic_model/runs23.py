@@ -11,14 +11,11 @@ from word_embedding_utils import *
 from collections import OrderedDict
 import pickle
 
-from sentence_transformers import SentenceTransformer
 from evaluation import evaluate_classification, evaluate_clustering
 
 
 import numpy as np
-from tqdm import tqdm_notebook
 from torch.utils.data import Dataset, DataLoader
-from nltk.corpus import stopwords
 
 from sklearn.feature_extraction.text import CountVectorizer
 from utils.miscellaneous import AverageMeter
@@ -26,14 +23,10 @@ from collections import OrderedDict
 
 import pandas as pd
 from sklearn.feature_extraction.text import  CountVectorizer
-from gensim.corpora.dictionary import Dictionary
 from pytorch_transformers import *
-from nltk.corpus import stopwords
 
 from tqdm import tqdm
-import scipy.sparse as sp
 import nltk
-from nltk.corpus import stopwords
 
 from datetime import datetime
 from scipy.linalg import qr
@@ -43,8 +36,6 @@ from evaluation import get_topic_qualities
 import warnings
 warnings.filterwarnings("ignore")
 from contextualized_topic_models.utils.data_preparation import TopicModelDataPreparation
-from nltk.corpus import stopwords as stop_words
-from gensim.utils import deaccent
 from utils.config import _parse_args, save_config
 import wandb
 from utils import miscellaneous, log
@@ -173,93 +164,6 @@ class Stage2TestDataset(Dataset):
     def __getitem__(self, idx):
         return self.embedding_list[idx], self.bow_list[idx]
 
-class WhiteSpacePreprocessing():
-    def __init__(self, documents, stopwords_language="english", vocabulary_size=2000):
-        self.documents = documents
-        self.stopwords = set(stop_words.words(stopwords_language))
-        self.vocabulary_size = vocabulary_size
-
-        warnings.simplefilter('always', DeprecationWarning)
-        warnings.warn("WhiteSpacePreprocessing is deprecated and will be removed in future versions."
-                      "Use WhiteSpacePreprocessingStopwords.")
-
-    def preprocess(self):
-        preprocessed_docs_tmp = self.documents
-        preprocessed_docs_tmp = [deaccent(doc.lower()) for doc in preprocessed_docs_tmp]
-        preprocessed_docs_tmp = [doc.translate(
-            str.maketrans(string.punctuation, ' ' * len(string.punctuation))) for doc in preprocessed_docs_tmp]
-        preprocessed_docs_tmp = [' '.join([w for w in doc.split() if len(w) > 0 and w not in self.stopwords])
-                                 for doc in preprocessed_docs_tmp]
-
-        vectorizer = CountVectorizer(max_features=self.vocabulary_size)
-        vectorizer.fit_transform(preprocessed_docs_tmp)
-        temp_vocabulary = set(vectorizer.get_feature_names())
-
-        preprocessed_docs_tmp = [' '.join([w for w in doc.split() if w in temp_vocabulary])
-                                 for doc in preprocessed_docs_tmp]
-
-        preprocessed_docs, unpreprocessed_docs, retained_indices = [], [], []
-        for i, doc in enumerate(preprocessed_docs_tmp):
-            if len(doc) > 0:
-                preprocessed_docs.append(doc)
-                unpreprocessed_docs.append(self.documents[i])
-                retained_indices.append(i)
-
-        vocabulary = list(set([item for doc in preprocessed_docs for item in doc.split()]))
-
-        return preprocessed_docs, unpreprocessed_docs, vocabulary, retained_indices
-
-def get_document_topic(topic_words, preprocessed_documents_lemmatized):
-    topic_words_flatten = list(itertools.chain.from_iterable(topic_words))
-    if '' in topic_words_flatten:
-        topic_words_flatten.remove('')
-    topic_words_flatten = list(set(topic_words_flatten))
-    
-    vectorizer = CountVectorizer(vocabulary = topic_words_flatten)
-    vectorizer = vectorizer.fit(preprocessed_documents_lemmatized)
-    count_mat = vectorizer.transform(preprocessed_documents_lemmatized).toarray()
-    
-    count_mat_normalized = count_mat + 1e-4
-    count_mat_normalized = count_mat_normalized / count_mat_normalized.sum(axis=1).reshape(-1, 1)
-    
-    topic_mat = vectorizer.transform([' '.join(i) for i in topic_words]).toarray()
-    topic_mat_normalized = topic_mat + 1e-4
-    topic_mat_normalized = topic_mat_normalized / topic_mat_normalized.sum(axis=1).reshape(-1, 1)
-    
-    topic_mat_inverse = topic_mat_normalized @ topic_mat_normalized.transpose()
-    topic_mat_inverse = np.linalg.inv(topic_mat_inverse)
-    topic_mat_inverse = topic_mat_normalized.transpose() @ topic_mat_inverse
-    document_topic = count_mat_normalized @ topic_mat_inverse
-    return document_topic
-
-class TopicModelDataPreparationNoNumber(TopicModelDataPreparation):
-    def fit(self, text_for_contextual, text_for_bow, labels=None, wordlist=None):
-        """
-        This method fits the vectorizer and gets the embeddings from the contextual model
-        :param text_for_contextual: list of unpreprocessed documents to generate the contextualized embeddings
-        :param text_for_bow: list of preprocessed documents for creating the bag-of-words
-        :param labels: list of labels associated with each document (optional).
-        """
-
-        if self.contextualized_model is None:
-            raise Exception("You should define a contextualized model if you want to create the embeddings")
-
-        # TODO: this count vectorizer removes tokens that have len = 1, might be unexpected for the users
-        self.vectorizer = CountVectorizer(token_pattern=r'\b[a-zA-Z]{2,}\b', vocabulary=wordlist)
-
-        train_bow_embeddings = self.vectorizer.fit_transform(text_for_bow)
-        train_contextualized_embeddings = bert_embeddings_from_list(text_for_contextual, self.contextualized_model)
-        self.vocab = self.vectorizer.get_feature_names()
-        self.id2token = {k: v for k, v in zip(range(0, len(self.vocab)), self.vocab)}
-
-        if labels:
-            self.label_encoder = OneHotEncoder()
-            encoded_labels = self.label_encoder.fit_transform(np.array([labels]).reshape(-1, 1))
-        else:
-            encoded_labels = None
-
-        return CTMDataset(train_contextualized_embeddings, train_bow_embeddings, self.id2token, encoded_labels)
-    
 def dist_match_loss(hiddens, alpha=1.0):
     device = hiddens.device
     hidden_dim = hiddens.shape[-1]
@@ -386,7 +290,7 @@ if __name__ == "__main__":
     vocab_dict = finetuneds.vectorizer.vocabulary_
     vocab_dict_reverse = {i:v for v, i in vocab_dict.items()}
     print(n_word)
-    
+
     total_score_cat = np.load(os.path.join(model_stage1_name, 'total_score_cat.npy'))
     with open(os.path.join(model_stage1_name, 'words_to_idx.pkl'), 'rb') as file:
         words_to_idx = pickle.load(file)
@@ -418,7 +322,7 @@ if __name__ == "__main__":
         nn.init.xavier_uniform_(model.beta)
         model.beta_batchnorm = nn.Sequential()
         model.cuda(gpu_ids[0])
-        
+
         losses = AverageMeter()
         dlosses = AverageMeter() 
         rlosses = AverageMeter()
@@ -454,7 +358,7 @@ if __name__ == "__main__":
 
                 org_topic = F.softmax(org_topic_logit, dim=1)
                 pos_topic = F.softmax(pos_topic_logit, dim=1)
-                
+
                 recons_loss = torch.mean(-torch.sum(torch.log(org_dists + 1E-10) * (org_bow * weight_cands), axis=1), axis=0)
                 recons_loss += torch.mean(-torch.sum(torch.log((1-org_dists) + 1E-10) * ((1-org_bow) * weight_cands), axis=1), axis=0)
                 recons_loss += torch.mean(-torch.sum(torch.log(pos_dists + 1E-10) * (pos_bow * weight_cands), axis=1), axis=0)
@@ -468,12 +372,12 @@ if __name__ == "__main__":
                 # distribution loss
                 # batchmean
                 distmatch_loss = dist_match_loss(torch.cat((org_topic, pos_topic), dim=0), dirichlet_alpha_2)
-                
+
 
                 loss = args.coeff_2_recon * recons_loss + \
                     args.coeff_2_cons * cons_loss + \
                     args.coeff_2_dist * distmatch_loss 
-                
+
                 losses.update(loss.item(), bsz)
                 closses.update(cons_loss.item(), bsz)
                 rlosses.update(recons_loss.item(), bsz)
@@ -482,7 +386,7 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                
+
             print("Epoch-{} / recon: {:.5f} - dist: {:.5f} - cons: {:.5f}".format(epoch, rlosses.avg, distlosses.avg, closses.avg))
             logger.info("Epoch-{} / recon: {:.5f} - dist: {:.5f} - cons: {:.5f}".format(epoch, rlosses.avg, distlosses.avg, closses.avg))
             wandb.log({"recon_loss": rlosses.avg, "dist_loss": distlosses.avg, "cons_loss": closses.avg})
@@ -513,9 +417,9 @@ if __name__ == "__main__":
             batch_size = org_input.size(0)
             org_dists, org_topic_logit = model.decode(org_input)
             org_topic = F.softmax(org_topic_logit, dim=1)
-            
+
             train_theta.append(org_topic.detach().cpu())
-        
+
         train_theta = np.concatenate(train_theta, axis=0)
 
         for batch_idx, batch in tqdm(enumerate(testloader)): 
@@ -525,18 +429,18 @@ if __name__ == "__main__":
             org_bow = org_bow.cuda(gpu_ids[0])
             org_dists, org_topic_logit = model.decode(org_input)
             org_topic = F.softmax(org_topic_logit, dim=1)
-            
+
             test_theta.append(org_topic.detach().cpu())
-        
+
         test_theta = np.concatenate(test_theta, axis=0)
-        
+
         classification_res = evaluate_classification(train_theta, test_theta, textData.target_filtered, textData.test_targets, tune=True, logger=logger)
         clustering_res = evaluate_clustering(test_theta, textData.test_targets)
-        
+
         results.update(classification_res)
         results.update(clustering_res)
-        
-        
+
+
         if should_measure_hungarian:
             topic_dist = torch.empty((0, n_topic))
             model.eval()
@@ -563,14 +467,14 @@ if __name__ == "__main__":
     print(results_df.mean())
     print('std')
     print(results_df.std())
-    
-    
+
+
     logger.info(results_df)
     logger.info('mean')
     logger.info(results_df.mean())
     logger.info('std')
     logger.info(results_df.std())
-    
+
     wandb.log({'mean_acc': results_df.mean()['acc']})
     wandb.log({'mean_f1': results_df.mean()['macro-F1']})
     wandb.log({'mean_purity': results_df.mean()['Purity']})
@@ -580,7 +484,7 @@ if __name__ == "__main__":
     wandb.log({'mean_NPMI': results_df.mean()['npmi_wiki']})
     wandb.log({'mean_cp': results_df.mean()['cp_wiki']})
     wandb.log({'mean_sim': results_df.mean()['sim_w2v']})
-    
+
     wandb.log({'std_acc': results_df.std()['acc']})
     wandb.log({'std_f1': results_df.std()['macro-F1']})
     wandb.log({'std_purity': results_df.std()['Purity']})

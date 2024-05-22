@@ -342,7 +342,8 @@ if __name__=="__main__":
     except:
         plt.scatter(numpy_points[:, 0], numpy_points[:, 1], cmap = plt.cm.rainbow, s=1)
     plt.savefig(os.path.join(model_stage1_name, 'fig.png'))
-    wandb.Image(os.path.join(model_stage1_name, 'fig.png'))
+    image = wandb.Image(os.path.join(model_stage1_name, 'fig.png'))
+    wandb.log({"topic_distribution": image})
 
 
 
