@@ -39,7 +39,7 @@ import pickle, json
 warnings.filterwarnings("ignore")
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"  # Arrange GPU devices starting from 0
-os.environ["CUDA_VISIBLE_DEVICES"]= "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"]= "0,1,2,3"
 
 class WhiteSpacePreprocessing():
     def __init__(self, documents, stopwords_language="english", vocabulary_size=2000):
@@ -197,7 +197,7 @@ if __name__=="__main__":
     gpu_ids = args.gpus
     # skip_stage_1 = (args.stage_1_ckpt is not None)
     
-    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
+    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
     miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
 

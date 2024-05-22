@@ -357,7 +357,7 @@ if __name__ == "__main__":
     # skip_stage_1 = (args.stage_1_ckpt is not None)
 
     # load stage 1 saved
-    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
+    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
     miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
     trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
