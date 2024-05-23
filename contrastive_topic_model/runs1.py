@@ -198,7 +198,14 @@ if __name__=="__main__":
     # skip_stage_1 = (args.stage_1_ckpt is not None)
     
     model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
-    miscellaneous.create_folder_if_not_exist(model_stage1_name)
+    if not os.path.exists(model_stage1_name):
+        os.makedirs(model_stage1_name)
+        print("Folder created:", model_stage1_name)
+    else:
+        print("Folder already exists:", model_stage1_name)
+        exit(0)
+
+    # miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
 
     # data preparation
