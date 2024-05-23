@@ -1,7 +1,7 @@
 import os
 
 bsz = 128
-dataset = 'news'
+dataset = 'imdb'
 n_topic = 50
 epochs_1 = 100
 epochs_2 = 100

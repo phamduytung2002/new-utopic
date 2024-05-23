@@ -1,8 +1,8 @@
 import os
 
 bsz = 128
-dataset = 'news'
-n_topic = 50
+dataset = 'imdb'
+n_topic = 100
 epochs_1 = 100
 epochs_2 = 100
 bert_model = 'sentence-transformers/all-MiniLM-L6-v2'
