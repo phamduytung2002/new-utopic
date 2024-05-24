@@ -12,7 +12,8 @@ if __name__ == "__main__":
         print("*******************************")
         print(f'Running {dataset} with stage_1_dist={stage_1_dist}')
         os.system(f'python runs1.py --base-model {bert_model} --dataset {dataset} --n-word 5000 --epochs-1 {epochs_1} --bsz {bsz} --coeff-1-dist {stage_1_dist} --n-cluster {n_topic}')
-        
+
+    for stage_1_dist in [0.1, 0.5, 1, 5, 10, 50, 100]:
         for stage_2_cons in [0.1, 0.5, 1, 5, 10]:
             for stage_2_dist in [0.1, 0.5, 1, 5, 10]:
                 print("*******************")
