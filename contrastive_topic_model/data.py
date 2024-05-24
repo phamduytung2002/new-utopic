@@ -55,14 +55,14 @@ def read_text(path):
 
 class newsData():
     def __init__(self):
-        # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
-        # self.data = self.dataset.data
-        # self.targets = self.dataset.target
-        self.data = []
-        self.targets = []
+        self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        self.data = self.dataset.data
+        self.targets = self.dataset.target
+        # self.data = []
+        # self.targets = []
         
-        self.data = read_text(os.path.join('data', '20NG', 'raw_train_texts.txt'))
-        self.targets = np.loadtxt(os.path.join('data', '20NG', 'train_labels.txt'), dtype=int)
+        # self.data = read_text(os.path.join('data', '20NG', 'raw_train_texts.txt'))
+        # self.targets = np.loadtxt(os.path.join('data', '20NG', 'train_labels.txt'), dtype=int)
         self.bow = scipy.sparse.load_npz(os.path.join('data', '20NG', 'train_bow.npz'))
         self.vocab = read_text(os.path.join('data', '20NG', 'vocab.txt'))
         # self.contextual_embed = np.load(os.path.join('data', '20NG', 'train_bert.npz'))['arr_0']
