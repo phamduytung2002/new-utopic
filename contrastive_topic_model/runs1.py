@@ -209,7 +209,7 @@ if __name__=="__main__":
 
 
     # data preparation
-    trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
+    trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=False)
     basesim_path = os.path.join(model_stage1_name, f'{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl')
     if os.path.isfile(basesim_path) == False:
         model = SentenceTransformer(bert_name.split('/')[-1], device='cuda')
