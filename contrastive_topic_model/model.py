@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
 from collections import OrderedDict
+import numpy as np
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -53,6 +54,19 @@ class ContBertTopicExtractorAE(nn.Module):
         #if torch.cuda.is_available():
         #    self.prior_variance = self.prior_variance.cuda()
         self.prior_variance = nn.Parameter(self.prior_variance)
+        self.bert_embedding = []
+        self.bertembedding = []
+        
+    
+    def pre_bert(self, input_ids, attention_mask):
+        output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+        self.bertembedding.append(output['pooler_output'].detach().cpu().numpy())
+
+    def concat_bert(self):
+        self.bsz = self.bertembedding[0].shape[0]
+        self.bertembedding = np.concatenate(self.bertembedding, axis=0)
+        for i in range(0, self.bertembedding.shape[0], self.bsz):
+            self.bert_embedding.append(self.bertembedding[i:i+self.bsz])
                 
         
     def decode(self, embedding):
@@ -65,19 +79,20 @@ class ContBertTopicExtractorAE(nn.Module):
         latent_topic = F.softmax(topic_logit, dim=1)
         word_dist = F.softmax(self.beta_batchnorm(torch.matmul(latent_topic, self.beta)), dim=1)
         return word_dist, topic_logit
-        
-        
-    def forward(self, input_ids, attention_mask, return_topic=False):
+
+
+    def forward(self, batch_idx, return_topic=False):
         if return_topic:
-            output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
-            embedding = output['pooler_output']
+            # output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+            embedding = torch.Tensor(self.bert_embedding[batch_idx]).to('cuda')
             logit = self.fc(embedding)
             latent_topic = F.softmax(logit, dim=1)
             return latent_topic, F.normalize(embedding, dim=1)
         else:
             with torch.no_grad():
-                output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
-                embedding = output['pooler_output']
+                # output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+                embedding = torch.Tensor(self.bert_embedding[batch_idx]).to('cuda')
+
             x = self.adapt_bert(embedding)
             x = self.activation(x)
             x = self.decode_fc(x)
@@ -87,6 +102,27 @@ class ContBertTopicExtractorAE(nn.Module):
             latent_topic = F.softmax(topic_logit, dim=1)
             word_dist = F.softmax(self.beta_batchnorm(torch.matmul(latent_topic, self.beta)), dim=1)
             return word_dist, topic_logit
+        
+    # def forward(self, input_ids, attention_mask, return_topic=False):
+    #     if return_topic:
+    #         output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+    #         embedding = output['pooler_output']
+    #         logit = self.fc(embedding)
+    #         latent_topic = F.softmax(logit, dim=1)
+    #         return latent_topic, F.normalize(embedding, dim=1)
+    #     else:
+    #         with torch.no_grad():
+    #             output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+    #             embedding = output['pooler_output']
+    #         x = self.adapt_bert(embedding)
+    #         x = self.activation(x)
+    #         x = self.decode_fc(x)
+    #         x = self.dropout(x)
+        
+    #         topic_logit = self.f_mu_batchnorm(self.f_mu(x))
+    #         latent_topic = F.softmax(topic_logit, dim=1)
+    #         word_dist = F.softmax(self.beta_batchnorm(torch.matmul(latent_topic, self.beta)), dim=1)
+    #         return word_dist, topic_logit
 
 
 class ContBertTopicExtractorv2(nn.Module):
