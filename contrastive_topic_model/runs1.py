@@ -241,6 +241,29 @@ if __name__=="__main__":
 
     temp_basesim_matrix = copy.deepcopy(basesim_matrix)
     finetuneds = FinetuneDataset(trainds, temp_basesim_matrix, ratio=1, k=1)
+    trainloader = DataLoader(finetuneds, batch_size=16, shuffle=False, num_workers=0)
+    memoryloader = DataLoader(finetuneds, batch_size=16 * 2, shuffle=False, num_workers=0)
+
+    optimizer = RangerLars(model.parameters(), lr=0.001, weight_decay=0.0001)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+
+    global_step = 0
+    memory_queue = F.softmax(torch.randn(512, n_cluster).cuda(gpu_ids[0]), dim=1)
+    tbar = tqdm(trainloader)
+    for batch_idx, batch in enumerate(tbar): 
+        org_input, pos_input, _, _ = batch
+        org_input_ids = org_input['input_ids'].cuda(gpu_ids[0])
+        org_attention_mask = org_input['attention_mask'].cuda(gpu_ids[0])
+        pos_input_ids = pos_input['input_ids'].cuda(gpu_ids[0])
+        pos_attention_mask = pos_input['attention_mask'].cuda(gpu_ids[0])
+        all_input_ids = torch.cat((org_input_ids, pos_input_ids), dim=0)
+        all_attention_masks = torch.cat((org_attention_mask, pos_attention_mask), dim=0)
+        model.pre_bert(all_input_ids, all_attention_masks)
+    model.concat_bert()
+
+
+    temp_basesim_matrix = copy.deepcopy(basesim_matrix)
+    finetuneds = FinetuneDataset(trainds, temp_basesim_matrix, ratio=1, k=1)
     trainloader = DataLoader(finetuneds, batch_size=bsz, shuffle=False, num_workers=0)
     memoryloader = DataLoader(finetuneds, batch_size=bsz * 2, shuffle=False, num_workers=0)
 
@@ -249,7 +272,11 @@ if __name__=="__main__":
 
     global_step = 0
     memory_queue = F.softmax(torch.randn(512, n_cluster).cuda(gpu_ids[0]), dim=1)
+    tbar = tqdm(trainloader)
+
     for epoch in range(epochs_1):
+        
+        begin_time = time.time()
         model.train()
         try:
             model.module.encoder.eval()
@@ -265,9 +292,11 @@ if __name__=="__main__":
             pos_attention_mask = pos_input['attention_mask'].cuda(gpu_ids[0])
             batch_size = org_input_ids.size(0)
 
+
             all_input_ids = torch.cat((org_input_ids, pos_input_ids), dim=0)
             all_attention_masks = torch.cat((org_attention_mask, pos_attention_mask), dim=0)
-            all_topics, _ = model(all_input_ids, all_attention_masks, return_topic=True)
+            # all_topics, _ = model(all_input_ids, all_attention_masks, return_topic=True)
+            all_topics, _ = model(batch_idx, return_topic=True)
 
             orig_topic, pos_topic = torch.split(all_topics, len(all_topics) // 2)
             pos_sim = torch.sum(orig_topic * pos_topic, dim=-1)
@@ -298,6 +327,7 @@ if __name__=="__main__":
             # if global_step==10:
             #     break
         scheduler.step()
+        print(time.time()-begin_time)
         logger.info("Epoch-{} / consistency: {:.5f} - dist: {:.5f}".format(epoch, closses.avg, dlosses.avg))
 
     torch.save(model.state_dict(), os.path.join(model_stage1_name, 'checkpoint.ckpt'))
