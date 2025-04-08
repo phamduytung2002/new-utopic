@@ -11,7 +11,7 @@ from gensim.utils import deaccent
 from nltk.corpus import stopwords as stop_words
 
 from scipy.optimize import linear_sum_assignment as linear_assignment
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
 from sentence_transformers import SentenceTransformer
 
 import numpy as np
@@ -61,7 +61,7 @@ class WhiteSpacePreprocessing():
 
         vectorizer = CountVectorizer(max_features=self.vocabulary_size)
         vectorizer.fit_transform(preprocessed_docs_tmp)
-        temp_vocabulary = set(vectorizer.get_feature_names())
+        temp_vocabulary = set(vectorizer.get_feature_names_out())
 
         preprocessed_docs_tmp = [' '.join([w for w in doc.split() if w in temp_vocabulary])
                                  for doc in preprocessed_docs_tmp]
@@ -94,7 +94,7 @@ class TopicModelDataPreparationNoNumber(TopicModelDataPreparation):
 
         train_bow_embeddings = self.vectorizer.fit_transform(text_for_bow)
         train_contextualized_embeddings = bert_embeddings_from_list(text_for_contextual, self.contextualized_model)
-        self.vocab = self.vectorizer.get_feature_names()
+        self.vocab = self.vectorizer.get_feature_names_out()
         self.id2token = {k: v for k, v in zip(range(0, len(self.vocab)), self.vocab)}
 
         if labels:
@@ -250,6 +250,7 @@ if __name__=="__main__":
     global_step = 0
     memory_queue = F.softmax(torch.randn(512, n_cluster).cuda(gpu_ids[0]), dim=1)
     tbar = tqdm(trainloader)
+
     for batch_idx, batch in enumerate(tbar): 
         org_input, pos_input, _, _ = batch
         org_input_ids = org_input['input_ids'].cuda(gpu_ids[0])
@@ -258,8 +259,8 @@ if __name__=="__main__":
         pos_attention_mask = pos_input['attention_mask'].cuda(gpu_ids[0])
         all_input_ids = torch.cat((org_input_ids, pos_input_ids), dim=0)
         all_attention_masks = torch.cat((org_attention_mask, pos_attention_mask), dim=0)
-        model.pre_bert(all_input_ids, all_attention_masks)
-    model.concat_bert()
+        model.module.pre_bert(all_input_ids, all_attention_masks)
+    model.module.concat_bert()
 
 
     temp_basesim_matrix = copy.deepcopy(basesim_matrix)
@@ -355,7 +356,7 @@ if __name__=="__main__":
             org_input, _, _, _ = batch
             org_input_ids = org_input['input_ids'].cuda(gpu_ids[0])
             org_attention_mask = org_input['attention_mask'].cuda(gpu_ids[0])
-            topic, _ = model(org_input_ids, org_attention_mask, return_topic = True)
+            topic, _ = model.module.forward2(org_input_ids, org_attention_mask, return_topic = True)
             result_list.append(topic)
     result_embedding = torch.cat(result_list)
     _, result_topic = torch.max(result_embedding, 1)
@@ -396,7 +397,7 @@ if __name__=="__main__":
     ctfidf_vectorizer = CTFIDFVectorizer()
     count = count_vectorizer.fit_transform(docs_per_class.text)
     ctfidf = ctfidf_vectorizer.fit_transform(count, n_samples=len(cluster_df)).toarray()
-    words = count_vectorizer.get_feature_names()
+    words = count_vectorizer.get_feature_names_out()
 
     # transport to gensim
     (gensim_corpus, gensim_dict) = vect2gensim(count_vectorizer, count)

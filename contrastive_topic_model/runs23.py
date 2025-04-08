@@ -261,7 +261,7 @@ if __name__ == "__main__":
     # skip_stage_1 = (args.stage_1_ckpt is not None)
 
     # load stage 1 saved
-    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
+    model_stage1_name = f'./results/stage_1/stage_1_240610/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
     miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
     trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
@@ -279,7 +279,7 @@ if __name__ == "__main__":
             new_state_dict[k] = v
     model = ContBertTopicExtractorAE(N_topic=n_cluster, N_word=n_word, bert=bert_name, bert_dim=384)
     model.cuda(gpu_ids[0])
-    model.load_state_dict(new_state_dict, strict=True)
+    model.load_state_dict(new_state_dict, strict=False)
 
     basesim_path = os.path.join(model_stage1_name, f'{args.dataset}_{bert_name_short}_basesim_matrix_full.pkl')
     basesim_matrix = torch.load(basesim_path)
@@ -292,6 +292,7 @@ if __name__ == "__main__":
     print(n_word)
 
     total_score_cat = np.load(os.path.join(model_stage1_name, 'total_score_cat.npy'))
+    print('total score cat shape: ', total_score_cat.shape)
     with open(os.path.join(model_stage1_name, 'words_to_idx.pkl'), 'rb') as file:
         words_to_idx = pickle.load(file)
 
@@ -317,7 +318,7 @@ if __name__ == "__main__":
                 new_state_dict[k[7:]] = v  # Remove 'module.' prefix
             else:
                 new_state_dict[k] = v
-        model.load_state_dict(new_state_dict, strict=True)
+        model.load_state_dict(new_state_dict, strict=False)
         model.beta = nn.Parameter(torch.Tensor(model.N_topic, n_word))
         nn.init.xavier_uniform_(model.beta)
         model.beta_batchnorm = nn.Sequential()
