@@ -1,21 +1,22 @@
 import os
 
-bsz = 128
+bsz = 200
 dataset = 'imdb'
-n_topic = 50
-epochs_1 = 100
+# n_topic = 10
+epochs_1 = 1000
 epochs_2 = 100
 bert_model = 'sentence-transformers/all-MiniLM-L6-v2'
 
 if __name__ == "__main__":
-    for stage_1_dist in [0.1, 0.5, 1, 5, 10, 50, 100]:
-        print("*******************************")
-        print(f'Running {dataset} with stage_1_dist={stage_1_dist}')
-        os.system(f'python runs1.py --base-model {bert_model} --dataset {dataset} --n-word 5000 --epochs-1 {epochs_1} --bsz {bsz} --coeff-1-dist {stage_1_dist} --n-cluster {n_topic}')
+    for n_topic in [70]:
+        for stage_1_dist in [1e3, 1e4, 1e5]:
+            print("*******************************")
+            print(f'Running {dataset} with stage_1_dist={stage_1_dist}')
+            os.system(f'python runs1.py --base-model {bert_model} --dataset {dataset} --n-word 5000 --epochs-1 {epochs_1} --bsz {bsz} --coeff-1-dist {stage_1_dist} --n-cluster {n_topic} --gpus {os.environ["CUDA_VISIBLE_DEVICES"]}')
 
-    for stage_1_dist in [0.1, 0.5, 1, 5, 10, 50, 100]:
-        for stage_2_cons in [0.1, 0.5, 1, 5, 10]:
-            for stage_2_dist in [0.1, 0.5, 1, 5, 10]:
+    for stage_1_dist in [1e3, 1e4, 1e5]:
+        for stage_2_cons in [1]:
+            for stage_2_dist in [1]:
                 print("*******************")
                 print("Running stage 2 with:")
                 print(f"stage_2_cons={stage_2_cons}")

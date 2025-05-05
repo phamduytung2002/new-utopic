@@ -27,6 +27,8 @@ from pytorch_transformers import *
 
 from tqdm import tqdm
 import nltk
+nltk.download('stopwords')
+nltk.download('wordnet')
 
 from datetime import datetime
 from scipy.linalg import qr
@@ -44,7 +46,7 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"  # Arrange GPU devices starting fro
 os.environ["CUDA_VISIBLE_DEVICES"]= "0" 
 
 class Stage2Dataset(Dataset):
-    def __init__(self, encoder, ds, basesim_matrix, word_candidates, k=1, lemmatize=False):
+    def __init__(self, encoder, ds, basesim_matrix, word_candidates, k=1, lemmatize=True):
         self.lemmatize = lemmatize
         self.ds = ds
         self.org_list = self.ds.org_list
@@ -261,7 +263,7 @@ if __name__ == "__main__":
     # skip_stage_1 = (args.stage_1_ckpt is not None)
 
     # load stage 1 saved
-    model_stage1_name = f'./results/stage_1/stage_1_240610/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
+    model_stage1_name = f'./results/stage_1/{args.dataset}_model_{bert_name_short}_stage1_{args.n_topic}t_bsz{args.bsz}_{args.n_word}w_{args.coeff_1_dist}s1dist_{args.epochs_1}e'
     miscellaneous.create_folder_if_not_exist(model_stage1_name)
 
     trainds = BertDataset(bert=bert_name, text_list=textData.data, N_word=n_word, vectorizer=None, lemmatize=True)
@@ -464,6 +466,17 @@ if __name__ == "__main__":
 
     results_df = pd.DataFrame(results_list)
     print(results_df)
+    print(results_df['CV_wiki'])
+    print(results_df['diversity'])
+    print(results_df['irbo'])
+    print(results_df['acc'])
+    print(results_df['macro-F1'])
+    print(results_df['Purity'])
+    print(results_df['NMI'])
+    
+    table_df = wandb.Table(dataframe=results_df)
+    wandb.log({'results_df': table_df})
+    
     print('mean')
     print(results_df.mean())
     print('std')
@@ -485,6 +498,7 @@ if __name__ == "__main__":
     wandb.log({'mean_NPMI': results_df.mean()['npmi_wiki']})
     wandb.log({'mean_cp': results_df.mean()['cp_wiki']})
     wandb.log({'mean_sim': results_df.mean()['sim_w2v']})
+    wandb.log({'mean_irbo': results_df.mean()['irbo']})
 
     wandb.log({'std_acc': results_df.std()['acc']})
     wandb.log({'std_f1': results_df.std()['macro-F1']})
@@ -495,6 +509,7 @@ if __name__ == "__main__":
     wandb.log({'std_NPMI': results_df.std()['npmi_wiki']})
     wandb.log({'std_cp': results_df.std()['cp_wiki']})
     wandb.log({'std_sim': results_df.std()['sim_w2v']})
+    wandb.log({'std_irbo': results_df.std()['irbo']})
 
     if args.result_file is not None:
         result_filename = f'{current_run_dir}/{args.result_file}'

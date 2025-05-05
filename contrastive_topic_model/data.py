@@ -17,7 +17,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
 from sklearn.datasets import fetch_20newsgroups
-from nltk.corpus import stopwords
+# from nltk.corpus import stopwords
 
 from sklearn.feature_extraction.text import CountVectorizer
 from collections import OrderedDict
@@ -38,9 +38,29 @@ import scipy
 from datetime import datetime
 from itertools import combinations
 
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('wordnet')
+# nltk.download('punkt')
+# nltk.download('stopwords')
+# nltk.download('wordnet')
+
+def read_words_from_file(filepath):
+    """
+    Reads a file containing one word per line and returns a list of words.
+
+    Args:
+        filepath (str): The path to the input file.
+
+    Returns:
+        List[str]: A list of words read from the file.
+    """
+    words = []
+    with open(filepath, 'r', encoding='utf-8') as file:
+        for line in file:
+            # Strip trailing and leading whitespace (like newline characters)
+            word = line.strip()
+            if word:  # Only add non-empty lines
+                words.append(word)
+    return words
+
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -165,6 +185,34 @@ class YahooData():
         self.target_filtered = self.targets[target_filtered]
         self.feature_labels = torch.tensor(self.target_filtered)
 
+class BBCData():
+    def __init__(self):
+        # self.dataset = fetch_20newsgroups(remove=('headers', 'footers', 'quotes'))
+        self.data = []
+        self.targets = []
+        
+        self.data = read_text(os.path.join('data', 'bbc', 'raw_train_texts.txt'))
+        self.targets = np.loadtxt(os.path.join('data', 'bbc', 'train_labels.txt'), dtype=int)
+        self.bow = scipy.sparse.load_npz(os.path.join('data', 'bbc', 'train_bow.npz'))
+        self.vocab = read_text(os.path.join('data', 'bbc', 'vocab.txt'))
+        # self.contextual_embed = np.load(os.path.join('data', 'bbc', 'train_bert.npz'))['arr_0']
+        
+        self.test_data = read_text(os.path.join('data', 'bbc', 'raw_test_texts.txt'))
+        self.test_targets = np.loadtxt(os.path.join('data', 'bbc', 'test_labels.txt'), dtype=int)
+        self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'bbc', 'test_bow.npz'))
+        # self.test_contextual_embed = np.load(os.path.join('data', 'bbc', 'test_bert.npz'))['arr_0']
+
+        idx = 0
+        target_filtered = []
+        for text in self.data:
+            if len(text) > 0:
+                target_filtered.append(idx)
+            idx += 1
+            
+        self.target_filtered = self.targets[target_filtered]
+        self.feature_labels = torch.tensor(self.target_filtered)
+
+
 class nipsAbstractData():
     def __init__(self, path="./data/papers.csv"):
         df = pd.read_csv(path)
@@ -231,7 +279,9 @@ class BertDataset(Dataset):
         self.nonempty_text = [re.sub("\'", "", sent) for sent in self.nonempty_text]
         
         self.tokenizer = AutoTokenizer.from_pretrained(bert)
-        self.stopwords_list = set(stopwords.words('english'))
+        # self.stopwords_list = set(stopwords.words('english'))
+        self.stopwords_list = set(read_words_from_file('/cm/archive/tungpd10/utopic/contrastive_topic_model/data/snowball_stopwords.txt'))
+
         self.N_word = N_word
         
         if vectorizer == None:

@@ -9,8 +9,9 @@ from sklearn.metrics import f1_score, accuracy_score
 from sklearn.svm import SVC
 from sklearn import metrics
 import wandb
+from contextualized_topic_models.evaluation import InvertedRBO
 
-word2vec_google = gensim.downloader.load('word2vec-google-news-300')
+# word2vec_google = gensim.downloader.load('word2vec-google-news-300')
 
 def purity_score(y_true, y_pred):
     # compute contingency matrix (also called confusion matrix)
@@ -134,6 +135,8 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
     with open(f"{filename[:-4]}_CV.txt", 'r') as f:
         tmpstr = '\n'.join(f.readlines())
     CV = read_palmetto_result(tmpstr)
+    
+    irbo = InvertedRBO(topic_word_list).score()
     # npmi_in = None
     # uci_in = None
     # if 'reference_corpus' in kwargs: # reference_corpus: list of list of words
@@ -144,7 +147,8 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
     #     npmi_in = cm.get_coherence()
     #     cm = CoherenceModel(topics=topic_word_list, texts=reference_corpus, dictionary=reference_dictionary, coherence='c_uci', topn=10)
     #     uci_in = cm.get_coherence()
-    sim = get_average_word2vec_similarity(topic_word_list, word2vec_google)
+    # sim = get_average_word2vec_similarity(topic_word_list, word2vec_google)
+    sim = 0
     all_word_set = set()
     all_word_list = []
     for word_list in topic_word_list:
@@ -161,7 +165,8 @@ def get_topic_qualities(topic_word_list, palmetto_dir, **kwargs):
            'cp_wiki': cp,
            'sim_w2v': sim,
            'diversity': diversity,
-           'filename': filename}
+           'filename': filename,
+           'irbo': irbo}
 
     
 def save_topic_top_keywords(top_keywords_list, filename=None):
