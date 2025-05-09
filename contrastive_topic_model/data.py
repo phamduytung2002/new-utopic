@@ -191,15 +191,15 @@ class BBCData():
         self.data = []
         self.targets = []
         
-        self.data = read_text(os.path.join('data', 'bbc', 'raw_train_texts.txt'))
-        self.targets = np.loadtxt(os.path.join('data', 'bbc', 'train_labels.txt'), dtype=int)
-        self.bow = scipy.sparse.load_npz(os.path.join('data', 'bbc', 'train_bow.npz'))
-        self.vocab = read_text(os.path.join('data', 'bbc', 'vocab.txt'))
+        self.data = read_text(os.path.join('data', 'BBC_new', 'raw_train_texts.txt'))
+        self.targets = np.loadtxt(os.path.join('data', 'BBC_new', 'train_labels.txt'), dtype=int)
+        self.bow = scipy.sparse.load_npz(os.path.join('data', 'BBC_new', 'train_bow.npz'))
+        self.vocab = read_text(os.path.join('data', 'BBC_new', 'vocab.txt'))
         # self.contextual_embed = np.load(os.path.join('data', 'bbc', 'train_bert.npz'))['arr_0']
         
-        self.test_data = read_text(os.path.join('data', 'bbc', 'raw_test_texts.txt'))
-        self.test_targets = np.loadtxt(os.path.join('data', 'bbc', 'test_labels.txt'), dtype=int)
-        self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'bbc', 'test_bow.npz'))
+        self.test_data = read_text(os.path.join('data', 'BBC_new', 'raw_test_texts.txt'))
+        self.test_targets = np.loadtxt(os.path.join('data', 'BBC_new', 'test_labels.txt'), dtype=int)
+        self.test_bow = scipy.sparse.load_npz(os.path.join('data', 'BBC_new', 'test_bow.npz'))
         # self.test_contextual_embed = np.load(os.path.join('data', 'bbc', 'test_bert.npz'))['arr_0']
 
         idx = 0
@@ -280,7 +280,7 @@ class BertDataset(Dataset):
         
         self.tokenizer = AutoTokenizer.from_pretrained(bert)
         # self.stopwords_list = set(stopwords.words('english'))
-        self.stopwords_list = set(read_words_from_file('/cm/archive/tungpd10/utopic/contrastive_topic_model/data/snowball_stopwords.txt'))
+        self.stopwords_list = set(read_words_from_file('data/snowball_stopwords.txt'))
 
         self.N_word = N_word
         
