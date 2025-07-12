@@ -81,29 +81,29 @@ class ContBertTopicExtractorAE(nn.Module):
         return word_dist, topic_logit
 
 
-    def forward(self, batch_idx, return_topic=False):
-        if return_topic:
-            # output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
-            embedding = torch.Tensor(self.bert_embedding[batch_idx]).to('cuda')
-            logit = self.fc(embedding)
-            latent_topic = F.softmax(logit, dim=1)
-            return latent_topic, F.normalize(embedding, dim=1)
-        else:
-            with torch.no_grad():
-                # output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
-                embedding = torch.Tensor(self.bert_embedding[batch_idx]).to('cuda')
-
-            x = self.adapt_bert(embedding)
-            x = self.activation(x)
-            x = self.decode_fc(x)
-            x = self.dropout(x)
+#    def forward(self, batch_idx, return_topic=False):
+#        if return_topic:
+#            # output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+#            embedding = torch.Tensor(self.bert_embedding[batch_idx]).to('cuda')
+#            logit = self.fc(embedding)
+#            latent_topic = F.softmax(logit, dim=1)
+#            return latent_topic, F.normalize(embedding, dim=1)
+#        else:
+#            with torch.no_grad():
+#                # output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
+#                embedding = torch.Tensor(self.bert_embedding[batch_idx]).to('cuda')
+#
+#            x = self.adapt_bert(embedding)
+#            x = self.activation(x)
+#            x = self.decode_fc(x)
+#            x = self.dropout(x)
+#        
+#            topic_logit = self.f_mu_batchnorm(self.f_mu(x))
+#            latent_topic = F.softmax(topic_logit, dim=1)
+#            word_dist = F.softmax(self.beta_batchnorm(torch.matmul(latent_topic, self.beta)), dim=1)
+#            return word_dist, topic_logit
         
-            topic_logit = self.f_mu_batchnorm(self.f_mu(x))
-            latent_topic = F.softmax(topic_logit, dim=1)
-            word_dist = F.softmax(self.beta_batchnorm(torch.matmul(latent_topic, self.beta)), dim=1)
-            return word_dist, topic_logit
-        
-    def forward2(self, input_ids, attention_mask, return_topic=False):
+    def forward(self, input_ids, attention_mask, return_topic=False):
         if return_topic:
             output = self.encoder(input_ids = input_ids, attention_mask = attention_mask)
             embedding = output['pooler_output']
